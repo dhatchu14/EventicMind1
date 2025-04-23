@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from config.db import get_db
 from . import schemas, service # Use the instantiated service
+import time # <--- Import time
 
 router = APIRouter(
     prefix="/products",
@@ -26,12 +27,24 @@ def create_product(
     db: Session = Depends(get_db),
     prod_service: service.ProductService = Depends(get_product_service)
 ):
+    request_received_time = time.time() # <--- Capture request received time
+    print(f"[{request_received_time:.4f}] Endpoint: Received create_product request for '{product.name}'") # <--- Log entry
     try:
-        return prod_service.create_new_product(db=db, product=product)
+        start_service_call = time.time() # <--- Time before calling service
+        created_product = prod_service.create_new_product(db=db, product=product)
+        end_service_call = time.time() # <--- Time after service call returns
+        service_duration = end_service_call - start_service_call
+        total_duration = end_service_call - request_received_time
+        print(f"[{end_service_call:.4f}] Endpoint: Finished create_product service call. Service duration: {service_duration:.4f}s") # <--- Log service duration
+        print(f"[{end_service_call:.4f}] Endpoint: Total request duration: {total_duration:.4f}s") # <--- Log total duration
+        return created_product
     except HTTPException as e:
+        # Re-raise HTTPExceptions directly
         raise e
     except Exception as e:
-        print(f"Error creating product: {e}")
+        # Log unexpected errors
+        error_time = time.time()
+        print(f"[{error_time:.4f}] Endpoint: Error creating product: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error creating product")
 
 @router.get(

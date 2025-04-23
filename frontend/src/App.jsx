@@ -18,6 +18,7 @@ import Cartopia from "@/components/HeroSection"; // Homepage (HeroSection)
 import OrderHistory from '@/components/OrderHistory';
 import AdminLoginPage from '@/components/AdminLogin'; // Renamed Admin Login Component
 import AdminDashboard from '@/components/AdminDashboard';
+import Shop from '@/components/Shop'; // <--- IMPORT YOUR SHOP COMPONENT (Adjust path if needed)
 
 // --- Protected Route Component for Admin ---
 const AdminProtectedRoute = ({ children }) => {
@@ -136,11 +137,12 @@ function App() {
             <Route path="/signup" element={<SignupPage />} />
             <Route path="/blogs" element={<BlogPage />} />
             <Route path="/about" element={<AboutPage />} />
-            {/* Example: <Route path="/shop" element={<ShopPage />} /> */}
+            {/* --- Use the actual Shop component --- */}
+            <Route path="/shop" element={<Shop />} /> {/* <--- UPDATED ROUTE */}
 
             {/* --- Regular User Authenticated Routes --- */}
             {/* TODO: Add protection for these routes if needed */}
-                        <Route path="/orders" element={<OrderHistory />} />
+            <Route path="/orders" element={<OrderHistory />} />
 
             {/* --- Admin Routes --- */}
             <Route path="/admin/login" element={<AdminLoginPage />} />
@@ -152,19 +154,7 @@ function App() {
                 </AdminProtectedRoute>
               }
             />
-             {/* Optional: Add more admin routes inside the protection structure if needed */}
-             {/* Example:
-             <Route
-              path="/admin/users"
-              element={
-                <AdminProtectedRoute>
-                  <AdminUserManagement />
-                </AdminProtectedRoute>
-              }
-            /> */}
 
-            {/* --- Optional: Catch-all 404 Route --- */}
-            {/* <Route path="*" element={<NotFoundPage />} /> */}
 
           </Routes>
         </main>

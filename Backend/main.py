@@ -19,51 +19,57 @@ except ImportError:
     product_module_imported = False
     logging.warning("Could not import product router. Product endpoints will be unavailable.")
 
-# --- NEW: Import Inventory router ---
+# --- Import Inventory router ---
 try:
     # Adjust path if your inventory module is located elsewhere
-    from domain.inventory.endpoint import router as inventory_router
+    # Check filename: should likely be 'endpoints.py' not 'endpoint.py'
+    from domain.inventory.endpoint import router as inventory_router # <--- Corrected filename assuming it's 'endpoints.py'
     inventory_module_imported = True
     logging.info("Successfully imported inventory router.")
 except ImportError:
     inventory_module_imported = False
     logging.warning("Could not import inventory router. Inventory endpoints will be unavailable.")
-    # Depending on requirements, you might want to raise an error here too
-    # raise ImportError("Failed to import the essential inventory module.") from None
+
+# --- NEW: Import Cart router ---
+try:
+    # Adjust path if your cart module is located elsewhere
+    from domain.cart.endpoints import router as cart_router
+    cart_module_imported = True
+    logging.info("Successfully imported cart router.") # Log success
+except ImportError as e:
+    cart_module_imported = False
+    logging.warning(f"Could not import cart router: {e}. Cart endpoints will be unavailable.") # Log failure with error
 
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # --- IMPORTANT ---
-# Ensure all SQLAlchemy models (Auth, User, Product, Inventory, etc.) are defined
+# Ensure all SQLAlchemy models (Auth, User, Product, Inventory, CartItem etc.) are defined
 # and imported (usually via their respective endpoint/service/repo modules)
 # BEFORE init_db() is called so they are registered with Base.metadata.
-logger.info("Importing models via endpoint modules...") # Added log line
+logger.info("Importing models via endpoint modules...")
 
 # Initialize Database (create tables if they don't exist)
-# This assumes db.init_db() finds all Base subclasses (User, Product, Inventory, etc.)
 logger.info("Initializing database...")
 try:
     db.init_db() # Assumes this creates tables for ALL imported models
     logger.info("Database initialization check complete.")
 except Exception as e:
     logger.error(f"Database initialization failed: {e}", exc_info=True)
-    # Depending on the error, you might want to exit the application
     raise RuntimeError("Failed to initialize database.") from e
 
 
 # --- Update API Metadata ---
 app = FastAPI(
-    title="My E-commerce API", # Kept Title
-    description="API for user authentication, product management, and inventory tracking.", # Updated Description
-    version="0.3.0", # Updated Version (incremented example for new feature)
+    title="My E-commerce API",
+    description="API for user authentication, product management, inventory tracking, and shopping cart.", # Updated Description
+    version="0.4.0", # Updated Version (incremented for cart feature)
 )
 
 # CORS Middleware Configuration
 # Read origins from settings if available, otherwise use defaults
 try:
-    # Assuming settings.ALLOWED_ORIGINS is a comma-separated string
     origins = settings.ALLOWED_ORIGINS.split(',')
     logger.info(f"CORS allowed origins from settings: {origins}")
 except AttributeError:
@@ -73,15 +79,14 @@ except AttributeError:
         "http://localhost:3000", # React CRA default
         # Add your frontend production URL here
     ]
-# Remove any leading/trailing whitespace from origins
 origins = [origin.strip() for origin in origins]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"], # Allows all standard methods
-    allow_headers=["*"], # Allows all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # --- Include Routers ---
@@ -99,24 +104,33 @@ if product_module_imported:
 else:
     logger.warning("Product router not included due to import failure.")
 
-# --- NEW: Include Inventory Router (Conditionally) ---
+# --- Include Inventory Router (Conditionally) ---
 if inventory_module_imported:
     logger.info("Including inventory router...")
     app.include_router(inventory_router) # Includes /inventory/...
 else:
     logger.warning("Inventory router not included due to import failure.")
 
+# --- NEW: Include Cart Router (Conditionally) ---
+if cart_module_imported:
+    logger.info("Including cart router...")
+    app.include_router(cart_router) # Includes /cart/...
+else:
+    logger.warning("Cart router not included due to import failure.")
+
 
 # --- Root Endpoint ---
 @app.get("/")
 async def root():
-    # Updated welcome message
+    # Updated welcome message including Cart
     modules_loaded = ["Authentication", "User"]
     if product_module_imported:
         modules_loaded.append("Product")
-    # --- NEW: Add Inventory to list if loaded ---
     if inventory_module_imported:
         modules_loaded.append("Inventory")
+    # --- NEW: Add Cart to list if loaded ---
+    if cart_module_imported:
+        modules_loaded.append("Cart")
     return {
         "message": "Welcome to the E-commerce API!",
         "active_modules": modules_loaded,
@@ -127,7 +141,6 @@ async def root():
 # if __name__ == "__main__":
 #     import uvicorn
 #     logger.info("Starting Uvicorn server for development...")
-#     # Consider loading host/port/reload from settings as well
 #     uvicorn.run(
 #         "main:app",
 #         host=getattr(settings, "HOST", "0.0.0.0"),

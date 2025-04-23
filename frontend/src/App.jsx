@@ -6,77 +6,83 @@ import { Toaster } from "@/components/ui/sonner";
 import { Loader2 } from 'lucide-react'; // For loading state in protected route
 
 // Core Components
-import Navbar from "@/components/Navbar"; // Updated Navbar component name
+import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
 
 // Page/Route Components
-import Login from "@/components/Login"; // Regular User Login
+import Login from "@/components/Login";
 import SignupPage from "@/components/Signup";
 import BlogPage from "@/components/BlogPage";
 import AboutPage from "@/components/AboutPage";
 import Cartopia from "@/components/HeroSection"; // Homepage (HeroSection)
 import OrderHistory from '@/components/OrderHistory';
-import AdminLoginPage from '@/components/AdminLogin'; // Renamed Admin Login Component
+import AdminLoginPage from '@/components/AdminLogin';
 import AdminDashboard from '@/components/AdminDashboard';
-import Shop from '@/components/Shop'; // <--- IMPORT YOUR SHOP COMPONENT (Adjust path if needed)
+import Shop from '@/components/Shop';
+import ProductDetails from '@/components/ProductDetails'; // <--- IMPORT ProductDetails
 
 // --- Protected Route Component for Admin ---
 const AdminProtectedRoute = ({ children }) => {
   const navigate = useNavigate();
   const location = useLocation();
-  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(null); // null = checking, false = no, true = yes
-  const [isChecking, setIsChecking] = useState(true); // Explicit checking state
+  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(null);
+  const [isChecking, setIsChecking] = useState(true);
 
   useEffect(() => {
-    let isMounted = true; // Prevent state update on unmounted component
+    let isMounted = true;
 
     const checkAdminAuth = () => {
-      setIsChecking(true); // Start check
-      const userString = localStorage.getItem('currentUser'); // Check the key used by AdminLogin
+      setIsChecking(true);
+      const userString = localStorage.getItem('currentUser');
       let isAdmin = false;
       if (userString) {
         try {
           const user = JSON.parse(userString);
-          // ** Crucial Validation **
-          if (user && user.role === 'admin' && user.email === 'admin@steer.com') {
+          if (user && user.role === 'admin' && user.email === 'admin@steer.com') { // Specific admin check
             isAdmin = true;
           } else {
-             console.warn("Invalid admin data found in localStorage.");
-             localStorage.removeItem('currentUser'); // Clean up invalid data
+             console.warn("Non-admin or invalid user data found in admin check.");
+             // Avoid automatically removing if a regular user might be logged in
+             // Consider if 'currentUser' is ONLY for admin or shared
           }
         } catch (e) {
-          console.error("Failed to parse admin user from localStorage", e);
-          localStorage.removeItem('currentUser'); // Clean up corrupted data
+          console.error("Failed to parse user from localStorage for admin check", e);
+          // localStorage.removeItem('currentUser'); // Only remove if corrupted and confirmed bad data
         }
       }
 
       if (isMounted) {
           setIsAdminAuthenticated(isAdmin);
-          setIsChecking(false); // Finish check
+          setIsChecking(false);
 
           if (!isAdmin) {
-            // Redirect them to the admin login page, saving the location they were trying to access
+            // Redirect non-admins trying to access admin routes
+            console.log(`AdminProtectedRoute: User not authenticated as admin. Redirecting from ${location.pathname}`);
             navigate('/admin/login', { replace: true, state: { from: location } });
+          } else {
+             console.log(`AdminProtectedRoute: Admin user authenticated for ${location.pathname}`);
           }
       }
     };
 
     checkAdminAuth();
 
-    // Re-check if the user logs in/out while the app is open
-    const handleAuthChange = () => checkAdminAuth();
+    const handleAuthChange = () => {
+        console.log("AdminProtectedRoute: Auth change detected, re-checking admin status.");
+        checkAdminAuth();
+    };
+    // Custom events might be needed if login/logout doesn't refresh the page or trigger standard auth context changes
     window.addEventListener('userLogin', handleAuthChange);
-    window.addEventListener('userLogout', handleAuthChange); // Listen for logout too
+    window.addEventListener('userLogout', handleAuthChange);
 
     return () => {
-        isMounted = false; // Cleanup listener flag
+        isMounted = false;
         window.removeEventListener('userLogin', handleAuthChange);
         window.removeEventListener('userLogout', handleAuthChange);
     };
 
-  }, [navigate, location]); // Rerun if navigation or location changes
+  }, [navigate, location]);
 
-  // Show a loader while checking authentication
   if (isChecking) {
     return (
       <div className="flex justify-center items-center min-h-[calc(100vh-theme(space.16)-theme(space.16))]">
@@ -85,34 +91,27 @@ const AdminProtectedRoute = ({ children }) => {
     );
   }
 
-  // If authenticated, render the child components (the dashboard)
-  // If not authenticated, the redirect happens in useEffect, so returning null is fine
+  // Render children only if check is complete AND user is authenticated as admin
   return isAdminAuthenticated ? children : null;
 };
 
 
 function App() {
-  const [darkMode, setDarkMode] = useState(false);
-
-  // Load dark mode preference from localStorage on initial load
-  useEffect(() => {
+  const [darkMode, setDarkMode] = useState(() => {
+    // Initialize dark mode state directly from localStorage or system preference
     const savedDarkMode = localStorage.getItem('darkMode');
-    // Check for null/undefined explicitly
     if (savedDarkMode !== null) {
       try {
-          setDarkMode(JSON.parse(savedDarkMode));
-      } catch (error) {
-          console.error("Failed to parse dark mode from localStorage", error);
-          setDarkMode(false); // Default to false on error
+        return JSON.parse(savedDarkMode);
+      } catch {
+        return false; // Default to false on parsing error
       }
-    } else {
-        // Optional: Check system preference if no setting saved
-        const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-        setDarkMode(prefersDark);
     }
-  }, []);
+    // Check system preference if no setting saved
+    return window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
+  });
 
-  // Save dark mode preference and apply class to HTML element
+  // Apply dark mode class to HTML element whenever darkMode state changes
   useEffect(() => {
     localStorage.setItem('darkMode', JSON.stringify(darkMode));
     if (darkMode) {
@@ -125,10 +124,9 @@ function App() {
 
   return (
     <Router>
-      {/* Apply dark mode class to the root div for component-level styling */}
       <div className={`${darkMode ? "dark" : ""} overflow-x-hidden min-h-screen flex flex-col bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-gray-100`}>
-        <Toaster position="top-right" richColors closeButton /> {/* Add Sonner Toaster */}
-        <Navbar darkMode={darkMode} setDarkMode={setDarkMode} /> {/* Pass props to Navbar */}
+        <Toaster position="top-right" richColors closeButton />
+        <Navbar darkMode={darkMode} setDarkMode={setDarkMode} />
         <main className="flex-grow pt-16"> {/* Adjust pt-16 if navbar height changes */}
           <Routes>
             {/* --- Public Routes --- */}
@@ -137,24 +135,31 @@ function App() {
             <Route path="/signup" element={<SignupPage />} />
             <Route path="/blogs" element={<BlogPage />} />
             <Route path="/about" element={<AboutPage />} />
-            {/* --- Use the actual Shop component --- */}
-            <Route path="/shop" element={<Shop />} /> {/* <--- UPDATED ROUTE */}
+            <Route path="/shop" element={<Shop />} />
+            {/* --- NEW: Product Details Route --- */}
+            {/* Uses ':id' as the parameter, matching ProductDetails component */}
+            <Route path="/product/:id" element={<ProductDetails />} />
 
             {/* --- Regular User Authenticated Routes --- */}
-            {/* TODO: Add protection for these routes if needed */}
+            {/* TODO: Add protection for these routes if needed (similar to AdminProtectedRoute but checking for regular user role) */}
             <Route path="/orders" element={<OrderHistory />} />
 
             {/* --- Admin Routes --- */}
             <Route path="/admin/login" element={<AdminLoginPage />} />
             <Route
-              path="/admin/dashboard"
+              path="/admin/dashboard/*" // Use '/*' to allow nested routes within the dashboard if needed later
               element={
                 <AdminProtectedRoute>
                   <AdminDashboard />
                 </AdminProtectedRoute>
               }
             />
+            {/* Example of a nested admin route (if AdminDashboard handled internal routing) */}
+            {/* <Route path="/admin/dashboard/users" element={<AdminProtectedRoute><AdminUserManagement /></AdminProtectedRoute>} /> */}
 
+
+            {/* --- Catch-all for Not Found (Optional) --- */}
+            {/* <Route path="*" element={<NotFoundPage />} /> */}
 
           </Routes>
         </main>

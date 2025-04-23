@@ -1,0 +1,11 @@
+# requirements.txt
+fastapi[all]
+uvicorn[standard]
+sqlalchemy
+psycopg2-binary   # Or appropriate driver for your DB (e.g., mysqlclient)
+python-dotenv
+pydantic[email]
+pydantic-settings # For newer Pydantic settings management
+passlib[bcrypt]
+python-jose[cryptography]
+python-multipart  # For form data like OAuth2PasswordRequestForm

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { Sun, Moon, User, LogOut, UserCircle, Package, LayoutDashboard, Loader2, ShieldCheck } from 'lucide-react';
+import { Sun, Moon, User, LogOut, UserCircle, Package, LayoutDashboard, Loader2, ShieldCheck, ShoppingCart } from 'lucide-react';
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -11,18 +11,21 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { toast } from 'sonner';
 import { Badge } from "@/components/ui/badge";
+import { useCart } from '@/components/CartContext'; // Adjust path if needed
 
 const Navbar = ({ darkMode, setDarkMode }) => {
+    // ... (keep existing state, hooks, functions: useState, useEffect, useCallback, checkAuthStatus, handleLogout, navigations, isActive)
     const [isLoggedIn, setIsLoggedIn] = useState(false);
     const [currentUser, setCurrentUser] = useState(null);
     const [isAdmin, setIsAdmin] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
     const navigate = useNavigate();
     const location = useLocation();
+    const { itemCount } = useCart();
 
     // --- checkAuthStatus, useEffect, handleLogout remain the same ---
     const checkAuthStatus = useCallback(async () => {
-        setIsLoading(true); // Set loading true at the start of the check
+        setIsLoading(true);
         let foundUser = false;
         let isAdminUser = false;
         let userDetails = null;
@@ -37,9 +40,7 @@ const Navbar = ({ darkMode, setDarkMode }) => {
                 });
                 if (response.ok) {
                     const userData = await response.json();
-                    // --- !!! ADAPT THIS LINE TO YOUR BACKEND RESPONSE !!! ---
                     isAdminUser = userData.role === 'admin';
-                    // --- End Adaptation ---
                     userDetails = {
                         name: userData.full_name || userData.email,
                         email: userData.email,
@@ -138,14 +139,13 @@ const Navbar = ({ darkMode, setDarkMode }) => {
     const navigateToSignup = () => navigate('/signup');
     const navigateToOrders = () => navigate('/orders');
     const navigateToDashboard = () => navigate('/admin/dashboard');
+    const navigateToCart = () => navigate('/cart');
 
     // isActive function for NavLink styling
     const isActive = (path) => location.pathname === path
         ? 'text-indigo-600 dark:text-indigo-400 font-medium'
         : 'text-gray-600 dark:text-gray-300 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors';
 
-
-    // Render Logic
     return (
         <header className="fixed top-0 left-0 right-0 z-50">
             <nav className="bg-white dark:bg-gray-900 shadow-md w-full border-b border-gray-200 dark:border-gray-700/50">
@@ -157,25 +157,44 @@ const Navbar = ({ darkMode, setDarkMode }) => {
                             EventicMind
                         </Link>
 
-                        {/* REMOVED the center div */}
-
                         {/* Right Side: Combined Nav Links & Actions */}
-                        {/* Increased spacing between nav block and actions with space-x-6 */}
                         <div className="flex items-center space-x-6">
 
-                            {/* Main Navigation Links (Now on the right) */}
-                            {/* Added space-x-5 for spacing between these links */}
+                            {/* Main Navigation Links */}
                             <div className="hidden md:flex items-center space-x-5">
                                 <Link to="/" className={isActive('/')}> Home </Link>
                                 <Link to="/shop" className={isActive('/shop')}> Shop </Link>
                                 <Link to="/blogs" className={isActive('/blogs')}> Blogs </Link>
                                 <Link to="/about" className={isActive('/about')}> About </Link>
-                                
                             </div>
 
-                            {/* Action Icons (Theme Toggle, Auth Dropdown) */}
-                            {/* Added space-x-3/4 within this smaller group */}
+                            {/* Action Icons */}
                             <div className="flex items-center space-x-3 md:space-x-4">
+
+                                {/* --- Shopping Cart Icon --- */}
+                                <Link
+                                    to="/cart"
+                                    className="relative p-2 rounded-full text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:focus:ring-offset-gray-900 transition-colors"
+                                    aria-label={`View shopping cart, ${itemCount} items`}
+                                >
+                                    <ShoppingCart size={20} />
+                                    {itemCount > 0 && (
+                                        <span
+                                            className="absolute top-0 right-0 block h-4 w-4 transform translate-x-1/3 -translate-y-1/3 rounded-full
+                                                     bg-black dark:bg-white       /* <-- CHANGED: Black background (light mode), White background (dark mode) */
+                                                     text-white dark:text-black   /* <-- CHANGED: White text (light mode), Black text (dark mode) */
+                                                     text-[10px]                  /* <-- Adjusted text size slightly */
+                                                     font-bold                    /* <-- Added font weight */
+                                                     flex items-center justify-center
+                                                     ring-1 ring-white dark:ring-gray-900 /* <-- Adjusted ring slightly */"
+                                            aria-hidden="true"
+                                        >
+                                            {itemCount}
+                                        </span>
+                                    )}
+                                </Link>
+                                {/* --- End Shopping Cart Icon --- */}
+
                                 {/* Dark Mode Toggle */}
                                 <button
                                     onClick={() => setDarkMode(!darkMode)}
@@ -186,6 +205,7 @@ const Navbar = ({ darkMode, setDarkMode }) => {
                                 </button>
 
                                 {/* Loading Indicator or User Dropdown */}
+                                {/* ... rest of the user dropdown logic remains the same ... */}
                                 {isLoading ? (
                                     <div className="w-[34px] h-[34px] flex items-center justify-center">
                                         <Loader2 size={20} className="animate-spin text-gray-500 dark:text-gray-400" />
@@ -199,7 +219,6 @@ const Navbar = ({ darkMode, setDarkMode }) => {
                                         </DropdownMenuTrigger>
                                         <DropdownMenuContent align="end" className="w-56">
                                             {isLoggedIn && currentUser ? (
-                                                // --- Logged In Menu ---
                                                 <>
                                                     <DropdownMenuLabel className="font-normal">
                                                         <div className="flex flex-col space-y-1">
@@ -223,7 +242,6 @@ const Navbar = ({ darkMode, setDarkMode }) => {
 
                                                     {!isAdmin && (
                                                        <>
-                                                          
                                                           <DropdownMenuItem onClick={navigateToOrders} className="cursor-pointer">
                                                               <Package className="mr-2 h-4 w-4" />
                                                               <span>My Orders</span>
@@ -238,7 +256,6 @@ const Navbar = ({ darkMode, setDarkMode }) => {
                                                     </DropdownMenuItem>
                                                 </>
                                             ) : (
-                                                // --- Logged Out Menu ---
                                                 <>
                                                     <DropdownMenuLabel>Account</DropdownMenuLabel>
                                                     <DropdownMenuSeparator />
@@ -254,12 +271,11 @@ const Navbar = ({ darkMode, setDarkMode }) => {
                                         </DropdownMenuContent>
                                     </DropdownMenu>
                                 )}
-                                {/* Mobile Menu Button Placeholder */}
-                            </div>
 
-                        </div>
-                    </div>
-                </div>
+                            </div> {/* End Action Icons */}
+                        </div> {/* End Right Side */}
+                    </div> {/* End Flex Container */}
+                </div> {/* End Container */}
             </nav>
         </header>
     );

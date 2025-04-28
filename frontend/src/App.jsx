@@ -3,12 +3,12 @@ import { useState, useEffect } from "react";
 import { BrowserRouter as Router, Route, Routes } from "react-router-dom";
 
 // Context Providers
-import { AuthProvider } from '@/contexts/AuthContext'; // *** IMPORT AuthProvider ***
-import { CartProvider } from '@/components/CartContext'; // Path to your CartContext
+import { AuthProvider } from '@/contexts/AuthContext';
+import { CartProvider } from '@/components/CartContext';
 
 // UI and Utils
 import { Toaster } from "@/components/ui/sonner";
-import { Loader2 } from 'lucide-react'; // Keep if used elsewhere, e.g., ProtectedRoute
+import { Loader2 } from 'lucide-react';
 
 // Core Components
 import Navbar from "@/components/Navbar";
@@ -19,15 +19,18 @@ import Login from "@/components/Login";
 import SignupPage from "@/components/Signup";
 import BlogPage from "@/components/BlogPage";
 import AboutPage from "@/components/AboutPage";
-import Cartopia from "@/components/HeroSection"; // Assuming this is your home page component
+import Cartopia from "@/components/HeroSection";
 import OrderHistory from '@/components/OrderHistory';
-// Removed AdminLoginPage, AdminDashboard imports if not needed
 import Shop from '@/components/Shop';
 import ProductDetails from '@/components/ProductDetails';
 import CartPage from '@/components/CartPage';
+import AdminLoginPage from '@/components/AdminLogin';
+import Dashboard from '@/components/AdminDashboard'; // *** 1. ADD THIS IMPORT ***
 
 // Route Protection Components
-import ProtectedRoute from '@/components/ProtectedRoute'; // Keep your standard user ProtectedRoute
+import ProtectedRoute from '@/components/ProtectedRoute';
+// *** TODO: Create an AdminProtectedRoute component later ***
+// import AdminProtectedRoute from '@/components/AdminProtectedRoute';
 
 function App() {
   // DarkMode state and effect (Keep as is)
@@ -46,14 +49,11 @@ function App() {
   }, [darkMode]);
 
   return (
-    // *** Wrap everything inside Router with AuthProvider ***
     <Router>
       <AuthProvider>
-        {/* CartProvider needs to be INSIDE AuthProvider to use useAuth */}
         <CartProvider>
           <div className={`${darkMode ? "dark" : ""} overflow-x-hidden min-h-screen flex flex-col bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-gray-100`}>
             <Toaster position="top-right" richColors closeButton />
-            {/* Navbar is inside both Providers, can use useAuth() and useCart() */}
             <Navbar darkMode={darkMode} setDarkMode={setDarkMode} />
             <main className="flex-grow pt-16">
               <Routes>
@@ -64,16 +64,22 @@ function App() {
                 <Route path="/blogs" element={<BlogPage />} />
                 <Route path="/about" element={<AboutPage />} />
                 <Route path="/shop" element={<Shop />} />
+                <Route path="/admin/login" element={<AdminLoginPage />} />
 
-                {/* --- REMOVED Admin Routes Section --- */}
+                {/* --- ADMIN ROUTES --- */}
+                {/* *** IMPORTANT: Add protection later! *** */}
+                {/* Example using AdminProtectedRoute (once created): */}
+                {/* <Route element={<AdminProtectedRoute />}> */}
+                  <Route path="/admin/dashboard" element={<Dashboard />} /> {/* *** 2. ADD THIS ACTUAL ROUTE *** */}
+                  {/* Add other admin routes here if needed */}
+                {/* </Route> */}
 
-                {/* Protected User Routes - Ensure ProtectedRoute uses useAuth */}
-                <Route element={<ProtectedRoute />}> {/* Layout Route for protection */}
+
+                {/* Protected User Routes */}
+                <Route element={<ProtectedRoute />}>
                   <Route path="/product/:id" element={<ProductDetails />} />
                   <Route path="/cart" element={<CartPage />} />
                   <Route path="/orders" element={<OrderHistory />} />
-                  {/* Add any other routes that require standard user login */}
-                  {/* e.g., <Route path="/profile" element={<UserProfile />} /> */}
                 </Route>
 
                 {/* Optional Catch-all */}

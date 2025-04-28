@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react'; // Need useEffect/useState again for local check
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { Sun, Moon, User, LogOut, UserCircle, Package, LayoutDashboard, Loader2, ShieldCheck, ShoppingCart } from 'lucide-react';
+import { Sun, Moon, LogOut, UserCircle, Package, LayoutDashboard, Loader2, ShieldCheck, ShoppingCart } from 'lucide-react';
 import {
     DropdownMenu,
     DropdownMenuContent,
@@ -9,143 +9,250 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { toast } from 'sonner';
 import { Badge } from "@/components/ui/badge";
-import { useCart } from '@/components/CartContext'; // Adjust path if needed
+import { Button } from "@/components/ui/button";
+import { useCart } from '@/components/CartContext';
+import { useAuth } from '@/contexts/AuthContext'; // Still use AuthContext for regular users & loading
 
 const Navbar = ({ darkMode, setDarkMode }) => {
-    // ... (keep existing state, hooks, functions: useState, useEffect, useCallback, checkAuthStatus, handleLogout, navigations, isActive)
-    const [isLoggedIn, setIsLoggedIn] = useState(false);
-    const [currentUser, setCurrentUser] = useState(null);
-    const [isAdmin, setIsAdmin] = useState(false);
-    const [isLoading, setIsLoading] = useState(true);
-    const navigate = useNavigate();
-    const location = useLocation();
+    // --- Get state and functions FROM AuthContext ---
+    // We primarily use context for regular users and the initial loading state
+    const { isLoggedIn: isRegularUserLoggedIn, user: regularUser, logout: contextLogout, isLoading: isContextLoading } = useAuth();
+
+    // --- Add state for locally checked admin ---
+    const [localAdminUser, setLocalAdminUser] = useState(null);
+    const [isCheckingLocalAdmin, setIsCheckingLocalAdmin] = useState(true); // Separate loading for local check
+    // -------------------------------------------
+
+    // Get cart count
     const { itemCount } = useCart();
 
-    // --- checkAuthStatus, useEffect, handleLogout remain the same ---
-    const checkAuthStatus = useCallback(async () => {
-        setIsLoading(true);
-        let foundUser = false;
-        let isAdminUser = false;
-        let userDetails = null;
-        let sessionExpired = false;
+    // Keep navigation hooks
+    const navigate = useNavigate();
+    const location = useLocation();
 
-        // 1. Check for regular user token
-        const token = localStorage.getItem('accessToken');
-        if (token) {
+    // --- Function to check ONLY the hardcoded admin in localStorage ---
+    const checkLocalAdmin = () => {
+        // console.log("Navbar: Checking local storage for 'currentUser' admin...");
+        setIsCheckingLocalAdmin(true);
+        const adminUserString = localStorage.getItem('currentUser');
+        if (adminUserString) {
             try {
-                const response = await fetch("http://localhost:8000/users/me", {
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-                if (response.ok) {
-                    const userData = await response.json();
-                    isAdminUser = userData.role === 'admin';
-                    userDetails = {
-                        name: userData.full_name || userData.email,
-                        email: userData.email,
-                        role: userData.role || 'user'
-                    };
-                    foundUser = true;
-                } else if (response.status === 401 || response.status === 403) {
-                    console.warn("Regular user token invalid/expired:", response.status);
-                    localStorage.removeItem('accessToken');
-                    sessionExpired = true;
+                const adminData = JSON.parse(adminUserString);
+                // Check if it looks like the hardcoded admin structure
+                if (adminData && adminData.role === 'admin') { // Check for role:'admin' specifically
+                    // console.log("Navbar: Found local admin user:", adminData);
+                    setLocalAdminUser(adminData);
                 } else {
-                     console.error("Failed to fetch regular user details:", response.status);
+                    // console.log("Navbar: Found 'currentUser' but not admin, clearing.");
+                    setLocalAdminUser(null);
+                    // Optional: Clear invalid item if found
+                    // localStorage.removeItem('currentUser');
                 }
             } catch (error) {
-                console.error("Network error fetching regular user details:", error);
+                console.error("Navbar: Failed to parse 'currentUser' from localStorage:", error);
+                setLocalAdminUser(null);
+                localStorage.removeItem('currentUser'); // Clear potentially corrupt item
             }
+        } else {
+            // console.log("Navbar: No local 'currentUser' found.");
+            setLocalAdminUser(null);
         }
+        setIsCheckingLocalAdmin(false);
+    };
 
-        // 2. Check for admin user if no regular user found
-        if (!foundUser) {
-            const adminUserString = localStorage.getItem('currentUser');
-            if (adminUserString) {
-                try {
-                    const adminData = JSON.parse(adminUserString);
-                    if (adminData && adminData.role === 'admin' && adminData.email === 'admin@steer.com') {
-                        isAdminUser = true;
-                        userDetails = {
-                            name: adminData.name || 'Admin',
-                            email: adminData.email,
-                            role: 'admin'
-                        };
-                        foundUser = true;
-                    } else {
-                         console.warn("Found 'currentUser' in localStorage, but it's not a valid admin structure.");
-                         localStorage.removeItem('currentUser');
-                    }
-                } catch (error) {
-                    console.error("Failed to parse admin user from localStorage:", error);
-                    localStorage.removeItem('currentUser');
-                }
-            }
-        }
-
-        // 3. Update state
-        setIsLoggedIn(foundUser);
-        setIsAdmin(isAdminUser);
-        setCurrentUser(foundUser ? userDetails : null);
-        setIsLoading(false);
-
-        // 4. Notify user if session expired
-        if (sessionExpired) {
-             toast.info("Your session has expired. Please log in again.");
-        }
-
-    }, []);
-
+    // --- useEffect to check local admin on mount and on storage/custom events ---
     useEffect(() => {
-        checkAuthStatus();
-        const handleAuthChange = () => checkAuthStatus();
-        window.addEventListener('userLogin', handleAuthChange);
-        window.addEventListener('userLogout', handleAuthChange);
+        checkLocalAdmin(); // Initial check
+
+        // Listen for the custom event dispatched by AdminLogin.jsx
+        window.addEventListener('userLogin', checkLocalAdmin);
+        // Listen for storage changes (e.g., logout in another tab)
         const handleStorageChange = (event) => {
-            if (event.key === 'accessToken' || event.key === 'currentUser') {
-                checkAuthStatus();
+            if (event.key === 'currentUser' || event.key === 'accessToken') {
+                checkLocalAdmin(); // Re-check local admin if either key changes
             }
         };
         window.addEventListener('storage', handleStorageChange);
-        return () => {
-            window.removeEventListener('userLogin', handleAuthChange);
-            window.removeEventListener('userLogout', handleAuthChange);
-            window.removeEventListener('storage', handleStorageChange);
-        };
-    }, [checkAuthStatus]);
 
-    const handleLogout = (showToast = true) => {
-        localStorage.removeItem('accessToken');
+        // Also listen for the custom logout event to clear local admin state
+        const handleLocalLogout = () => setLocalAdminUser(null);
+        window.addEventListener('userLogout', handleLocalLogout);
+
+
+        return () => {
+            window.removeEventListener('userLogin', checkLocalAdmin);
+            window.removeEventListener('storage', handleStorageChange);
+            window.removeEventListener('userLogout', handleLocalLogout);
+        };
+    }, []); // Run only on mount
+
+    // --- Combined Logout Handler ---
+    const handleLogout = () => {
+        // Call context logout (handles token, context state)
+        contextLogout();
+        // Explicitly remove the hardcoded admin item
         localStorage.removeItem('currentUser');
-        setIsLoggedIn(false);
-        setCurrentUser(null);
-        setIsAdmin(false);
-        setIsLoading(false);
+        // Manually update local admin state
+        setLocalAdminUser(null);
+        // Dispatch event just in case (though state update should suffice)
         window.dispatchEvent(new Event('userLogout'));
-        if (showToast) {
-            toast.success('Logged out successfully!');
-        }
+
+        // Navigation logic
         if (location.pathname.startsWith('/admin')) {
-             navigate('/admin/login');
-        } else if (location.pathname === '/login' || location.pathname === '/signup') {
-             navigate('/');
+            navigate('/admin/login');
+        } else {
+            navigate('/');
         }
     };
-    // --- End of unchanged functions ---
+    // -------------------------------
 
     // Navigation functions
     const navigateToLogin = () => navigate('/login');
     const navigateToSignup = () => navigate('/signup');
     const navigateToOrders = () => navigate('/orders');
     const navigateToDashboard = () => navigate('/admin/dashboard');
-    const navigateToCart = () => navigate('/cart');
 
-    // isActive function for NavLink styling
+    // isActive function (keep as is)
     const isActive = (path) => location.pathname === path
         ? 'text-indigo-600 dark:text-indigo-400 font-medium'
         : 'text-gray-600 dark:text-gray-300 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors';
 
+    // --- Combined Loading State ---
+    const isLoading = isContextLoading || isCheckingLocalAdmin;
+    // -----------------------------
+
+    // --- Get Initials Helper ---
+    const getInitials = (name) => {
+         if (!name) return "?";
+         const names = name.split(' ');
+         if (names.length === 1) return names[0][0]?.toUpperCase() || "?";
+         return (names[0][0] + names[names.length - 1][0]).toUpperCase();
+    };
+    // ---
+
+    // --- Updated Account Menu Logic ---
+    const renderAccountMenu = () => {
+        if (isLoading) {
+            return <div className="w-[34px] h-[34px] flex items-center justify-center"><Loader2 size={20} className="animate-spin text-gray-500 dark:text-gray-400" /></div>;
+        }
+
+        // --- PRIORITIZE LocalStorage Admin Check ---
+        if (localAdminUser && localAdminUser.role === 'admin') {
+            // ADMIN VIEW (from localStorage)
+            return (
+                <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                        <button className="p-1.5 rounded-full text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:focus:ring-offset-gray-900 transition-colors" aria-label="Admin account menu">
+                            <UserCircle size={22} />
+                        </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-56">
+                         <DropdownMenuLabel className="font-normal">
+                            <div className="flex flex-col space-y-1">
+                                <p className="text-sm font-medium leading-none flex items-center">
+                                    {localAdminUser.name || 'Admin'}
+                                    <Badge variant="destructive" className="ml-2 px-1.5 py-0.5 text-xs leading-none">Admin</Badge>
+                                </p>
+                                <p className="text-xs leading-none text-muted-foreground">
+                                    {localAdminUser.email}
+                                </p>
+                            </div>
+                        </DropdownMenuLabel>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onClick={navigateToDashboard} className="cursor-pointer">
+                            <LayoutDashboard className="mr-2 h-4 w-4" />
+                            <span>Admin Dashboard</span>
+                        </DropdownMenuItem>
+                        {/* No Orders link for this specific admin */}
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onClick={() => handleLogout()} className="cursor-pointer text-red-600 focus:text-red-700 focus:bg-red-50 dark:focus:bg-red-900/50 dark:text-red-500 dark:focus:text-red-400">
+                            <LogOut className="mr-2 h-4 w-4" />
+                            <span>Logout</span>
+                        </DropdownMenuItem>
+                    </DropdownMenuContent>
+                </DropdownMenu>
+            );
+        }
+        // --- End LocalStorage Admin Check ---
+
+        // --- Fallback to AuthContext for REGULAR users ---
+        else if (isRegularUserLoggedIn && regularUser) {
+            // REGULAR LOGGED IN VIEW (from context)
+             const isContextUserAdmin = regularUser?.role === 'admin'; // Still check if context user could be admin
+            return (
+                <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                         <button className="p-1.5 rounded-full text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:focus:ring-offset-gray-900 transition-colors" aria-label="Account menu">
+                            <UserCircle size={22} /> {/* Or use Avatar as before */}
+                         </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-56">
+                         <DropdownMenuLabel className="font-normal">
+                            <div className="flex flex-col space-y-1">
+                                <p className="text-sm font-medium leading-none flex items-center">
+                                    {regularUser.name || regularUser.email || 'User'}
+                                     {isContextUserAdmin && <Badge variant="destructive" className="ml-2 px-1.5 py-0.5 text-xs leading-none">Admin</Badge>}
+                                </p>
+                                <p className="text-xs leading-none text-muted-foreground">
+                                    {regularUser.email}
+                                </p>
+                            </div>
+                        </DropdownMenuLabel>
+                        <DropdownMenuSeparator />
+
+                        {isContextUserAdmin ? (
+                             <DropdownMenuItem onClick={navigateToDashboard} className="cursor-pointer">
+                                <LayoutDashboard className="mr-2 h-4 w-4" />
+                                <span>Admin Dashboard</span>
+                            </DropdownMenuItem>
+                        ) : (
+                             <DropdownMenuItem onClick={navigateToOrders} className="cursor-pointer">
+                                <Package className="mr-2 h-4 w-4" />
+                                <span>My Orders</span>
+                             </DropdownMenuItem>
+                        )}
+                        {/* Add Profile Link maybe? */}
+
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onClick={() => handleLogout()} className="cursor-pointer text-red-600 focus:text-red-700 focus:bg-red-50 dark:focus:bg-red-900/50 dark:text-red-500 dark:focus:text-red-400">
+                            <LogOut className="mr-2 h-4 w-4" />
+                            <span>Logout</span>
+                        </DropdownMenuItem>
+                    </DropdownMenuContent>
+                </DropdownMenu>
+            );
+        }
+        // --- End AuthContext Check ---
+
+        // --- LOGGED OUT VIEW (Default) ---
+        else {
+            return (
+                <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                         <button className="p-1.5 rounded-full text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:focus:ring-offset-gray-900 transition-colors" aria-label="Account menu">
+                             <UserCircle size={22} />
+                        </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-48">
+                        <DropdownMenuLabel>Account</DropdownMenuLabel>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onClick={navigateToLogin} className="cursor-pointer"> Login </DropdownMenuItem>
+                        <DropdownMenuItem onClick={navigateToSignup} className="cursor-pointer"> Sign Up </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem onClick={() => navigate('/admin/login')} className="cursor-pointer">
+                            <ShieldCheck className="mr-2 h-4 w-4 text-blue-600 dark:text-blue-400" />
+                            <span>Admin Login</span>
+                        </DropdownMenuItem>
+                    </DropdownMenuContent>
+                </DropdownMenu>
+            );
+        }
+    };
+    // --- End Updated Account Menu Logic ---
+
+
+    // --- Main Navbar Render ---
     return (
         <header className="fixed top-0 left-0 right-0 z-50">
             <nav className="bg-white dark:bg-gray-900 shadow-md w-full border-b border-gray-200 dark:border-gray-700/50">
@@ -171,29 +278,23 @@ const Navbar = ({ darkMode, setDarkMode }) => {
                             {/* Action Icons */}
                             <div className="flex items-center space-x-3 md:space-x-4">
 
-                                {/* --- Shopping Cart Icon --- */}
+                                {/* Shopping Cart Icon */}
                                 <Link
                                     to="/cart"
                                     className="relative p-2 rounded-full text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:focus:ring-offset-gray-900 transition-colors"
                                     aria-label={`View shopping cart, ${itemCount} items`}
                                 >
                                     <ShoppingCart size={20} />
-                                    {itemCount > 0 && (
+                                    {/* Use context isLoggedIn state for badge visibility */}
+                                    {isRegularUserLoggedIn && itemCount > 0 && (
                                         <span
-                                            className="absolute top-0 right-0 block h-4 w-4 transform translate-x-1/3 -translate-y-1/3 rounded-full
-                                                     bg-black dark:bg-white       /* <-- CHANGED: Black background (light mode), White background (dark mode) */
-                                                     text-white dark:text-black   /* <-- CHANGED: White text (light mode), Black text (dark mode) */
-                                                     text-[10px]                  /* <-- Adjusted text size slightly */
-                                                     font-bold                    /* <-- Added font weight */
-                                                     flex items-center justify-center
-                                                     ring-1 ring-white dark:ring-gray-900 /* <-- Adjusted ring slightly */"
+                                            className="absolute top-0 right-0 block h-4 w-4 transform translate-x-1/3 -translate-y-1/3 rounded-full bg-black dark:bg-white text-white dark:text-black text-[10px] font-bold flex items-center justify-center ring-1 ring-white dark:ring-gray-900"
                                             aria-hidden="true"
                                         >
                                             {itemCount}
                                         </span>
                                     )}
                                 </Link>
-                                {/* --- End Shopping Cart Icon --- */}
 
                                 {/* Dark Mode Toggle */}
                                 <button
@@ -205,72 +306,7 @@ const Navbar = ({ darkMode, setDarkMode }) => {
                                 </button>
 
                                 {/* Loading Indicator or User Dropdown */}
-                                {/* ... rest of the user dropdown logic remains the same ... */}
-                                {isLoading ? (
-                                    <div className="w-[34px] h-[34px] flex items-center justify-center">
-                                        <Loader2 size={20} className="animate-spin text-gray-500 dark:text-gray-400" />
-                                    </div>
-                                ) : (
-                                    <DropdownMenu>
-                                        <DropdownMenuTrigger asChild>
-                                            <button className="p-1.5 rounded-full text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:focus:ring-offset-gray-900 transition-colors" aria-label="Account menu">
-                                                {isLoggedIn ? <UserCircle size={22} /> : <User size={22} />}
-                                            </button>
-                                        </DropdownMenuTrigger>
-                                        <DropdownMenuContent align="end" className="w-56">
-                                            {isLoggedIn && currentUser ? (
-                                                <>
-                                                    <DropdownMenuLabel className="font-normal">
-                                                        <div className="flex flex-col space-y-1">
-                                                            <p className="text-sm font-medium leading-none flex items-center">
-                                                                {currentUser.name || 'User'}
-                                                                {isAdmin && <Badge variant="destructive" className="ml-2 px-1.5 py-0.5 text-xs leading-none">Admin</Badge>}
-                                                            </p>
-                                                            <p className="text-xs leading-none text-muted-foreground">
-                                                                {currentUser.email}
-                                                            </p>
-                                                        </div>
-                                                    </DropdownMenuLabel>
-                                                    <DropdownMenuSeparator />
-
-                                                    {isAdmin && (
-                                                        <DropdownMenuItem onClick={navigateToDashboard} className="cursor-pointer">
-                                                            <LayoutDashboard className="mr-2 h-4 w-4" />
-                                                            <span>Admin Dashboard</span>
-                                                        </DropdownMenuItem>
-                                                    )}
-
-                                                    {!isAdmin && (
-                                                       <>
-                                                          <DropdownMenuItem onClick={navigateToOrders} className="cursor-pointer">
-                                                              <Package className="mr-2 h-4 w-4" />
-                                                              <span>My Orders</span>
-                                                          </DropdownMenuItem>
-                                                       </>
-                                                    )}
-
-                                                    <DropdownMenuSeparator />
-                                                    <DropdownMenuItem onClick={() => handleLogout(true)} className="cursor-pointer text-red-600 focus:text-red-700 focus:bg-red-50 dark:focus:bg-red-900/50 dark:text-red-500 dark:focus:text-red-400">
-                                                        <LogOut className="mr-2 h-4 w-4" />
-                                                        <span>Logout</span>
-                                                    </DropdownMenuItem>
-                                                </>
-                                            ) : (
-                                                <>
-                                                    <DropdownMenuLabel>Account</DropdownMenuLabel>
-                                                    <DropdownMenuSeparator />
-                                                    <DropdownMenuItem onClick={navigateToLogin} className="cursor-pointer"> Login </DropdownMenuItem>
-                                                    <DropdownMenuItem onClick={navigateToSignup} className="cursor-pointer"> Sign Up </DropdownMenuItem>
-                                                    <DropdownMenuSeparator />
-                                                    <DropdownMenuItem onClick={() => navigate('/admin/login')} className="cursor-pointer">
-                                                        <ShieldCheck className="mr-2 h-4 w-4 text-blue-600 dark:text-blue-400" />
-                                                        <span>Admin Login</span>
-                                                    </DropdownMenuItem>
-                                                </>
-                                            )}
-                                        </DropdownMenuContent>
-                                    </DropdownMenu>
-                                )}
+                                {renderAccountMenu()}
 
                             </div> {/* End Action Icons */}
                         </div> {/* End Right Side */}

@@ -1,14 +1,17 @@
 # backend/config/db.py
-# (Keep the code exactly as provided in the *second* previous answer - the one with init_db)
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from .settings import settings
 import logging
 
-DATABASE_URL = settings.DATABASE_URL
+DATABASE_URL = settings.DATABASE_URL # Get URL from settings
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# --- Add this line ---
+logger.info(f"Attempting to connect using DATABASE_URL: {DATABASE_URL}")
+# --------------------
 
 engine = None
 SessionLocal = None
@@ -19,9 +22,14 @@ try:
     if DATABASE_URL.startswith("sqlite"):
         connect_args = {"check_same_thread": False}
         logger.info("Using SQLite database.")
-    # ... (other DB type logs) ...
+    # Add elif for postgresql if needed for specific args/logs
+    elif DATABASE_URL.startswith("postgresql"):
+         logger.info("Configuring PostgreSQL engine.")
+    else:
+        logger.info(f"Configuring engine for DB type: {DATABASE_URL.split(':')[0]}")
 
-    engine = create_engine(DATABASE_URL, connect_args=connect_args, echo=False)
+
+    engine = create_engine(DATABASE_URL, connect_args=connect_args, echo=False) # echo=True can be useful for debugging SQL too
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     logger.info("Database engine and session configured successfully.")
 
@@ -31,14 +39,19 @@ try:
             return
         try:
             logger.info("Attempting to create database tables...")
+            # --- Add log before create_all ---
+            logger.info(f"Models known to Base before create_all: {list(Base.metadata.tables.keys())}")
+            # --------------------------------
             Base.metadata.create_all(bind=engine)
             logger.info("Database tables checked/created successfully.")
         except Exception as e:
-            logger.error(f"Error creating database tables: {e}")
-            # raise e
+            # --- Enhance error logging ---
+            logger.error(f"Error creating database tables: {e}", exc_info=True) # Add exc_info=True
+            # raise e # Consider uncommenting this during debug to halt on error
+            # ----------------------------
 
 except Exception as e:
-    logger.error(f"FATAL: Error configuring database connection: {e}")
+    logger.error(f"FATAL: Error configuring database connection: {e}", exc_info=True) # Add exc_info=True
     def init_db():
         logger.error("Database initialization skipped due to connection error.")
 

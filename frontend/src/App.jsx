@@ -25,11 +25,11 @@ import Shop from '@/components/Shop';
 import ProductDetails from '@/components/ProductDetails';
 import CartPage from '@/components/CartPage';
 import AdminLoginPage from '@/components/AdminLogin';
-import Dashboard from '@/components/AdminDashboard'; // *** 1. ADD THIS IMPORT ***
+import Dashboard from '@/components/AdminDashboard';
+import Payment from '@/components/Payment'; // <--- 1. IMPORT Payment component
 
 // Route Protection Components
 import ProtectedRoute from '@/components/ProtectedRoute';
-// *** TODO: Create an AdminProtectedRoute component later ***
 // import AdminProtectedRoute from '@/components/AdminProtectedRoute';
 
 function App() {
@@ -66,12 +66,9 @@ function App() {
                 <Route path="/shop" element={<Shop />} />
                 <Route path="/admin/login" element={<AdminLoginPage />} />
 
-                {/* --- ADMIN ROUTES --- */}
-                {/* *** IMPORTANT: Add protection later! *** */}
-                {/* Example using AdminProtectedRoute (once created): */}
+                {/* Admin Routes */}
                 {/* <Route element={<AdminProtectedRoute />}> */}
-                  <Route path="/admin/dashboard" element={<Dashboard />} /> {/* *** 2. ADD THIS ACTUAL ROUTE *** */}
-                  {/* Add other admin routes here if needed */}
+                  <Route path="/admin/dashboard" element={<Dashboard />} />
                 {/* </Route> */}
 
 
@@ -80,6 +77,12 @@ function App() {
                   <Route path="/product/:id" element={<ProductDetails />} />
                   <Route path="/cart" element={<CartPage />} />
                   <Route path="/orders" element={<OrderHistory />} />
+                  <Route path="/checkout" element={<Payment />} /> {/* <--- 2. ADD this route */}
+                  {/* Add payment processing routes (stripe, cash, razorpay) here if they are separate pages */}
+                   {/* <Route path="/stripe" element={<StripePaymentPage />} /> */}
+                   {/* <Route path="/cash-on-delivery" element={<CodConfirmationPage />} /> */}
+                   {/* <Route path="/razorpay" element={<RazorpayPaymentPage />} /> */}
+                   {/* <Route path="/order-success" element={<OrderSuccessPage />} /> */}
                 </Route>
 
                 {/* Optional Catch-all */}

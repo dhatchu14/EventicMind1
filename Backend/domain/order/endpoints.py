@@ -2,87 +2,96 @@
 import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from typing import List # <-- Import List
+from typing import List
+from pydantic import BaseModel # <-- Import BaseModel
 
 # Use relative imports
 from .schemas import OrderCreate, OrderResponse
 from .service import OrderService
+from .models import Order # <-- Import your Order SQLAlchemy model (adjust path if needed)
 
 # --- IMPORTANT: Import your ACTUAL authentication dependencies ---
 # Replace these placeholders with your correct paths and function names
 try:
     # Assuming auth stuff is in a sibling 'authentication' directory
     from ..authentication.service import get_current_active_user
-    from ..authentication.models import User # Replace with your actual User model import
+    # Make sure this User import points to your ACTUAL SQLAlchemy User model if needed for role checking
+    from ..authentication.models import User as AuthUser # Renamed to avoid conflict if needed
 except ImportError:
     # Fallback or error if structure is different
     # Dummy placeholders - REMOVE/REPLACE these in your actual code
     print("WARNING: Using placeholder auth dependencies. Replace with actual implementation.")
-    User = type("User", (), {"id": 1, "email": "placeholder@example.com"}) # Dummy User type
+    AuthUser = type("AuthUser", (), {"id": 1, "role": "admin", "email": "placeholder@example.com"}) # Dummy User type with role
     def get_current_active_user(): # Dummy dependency
         print("WARNING: Using placeholder get_current_active_user dependency.")
-        return User()
+        return AuthUser()
 # --------------------------------------------------------------
 
 # Import get_db - Adjust path if needed
 try:
     from config.db import get_db
 except ImportError:
-     from config.db import get_db # Try relative path if config is one level up
+     from ...config.db import get_db # Adjust relative path if needed (e.g., if config is higher up)
+
 
 router = APIRouter(
-    # Setting prefix here simplifies endpoint paths below
     prefix="/orders",
     tags=["Orders"]
 )
 
 logger = logging.getLogger(__name__)
 
+# Define valid statuses (mirroring frontend, ideally centralize this list)
+# Keep this consistent with the `value` fields in your frontend's ORDER_STATUSES
+ORDER_STATUSES_VALUES = [
+    'pending',
+    'pending_cod',
+    'processing',
+    'shipped',
+    'delivered',
+    'cancelled',
+]
+
+# --- Pydantic Model for the PATCH Request Body ---
+class OrderStatusUpdatePayload(BaseModel):
+    status: str
+
 # --- Endpoint to CREATE an order ---
-# Path is now "/" relative to the "/orders" prefix
 @router.post("/", response_model=OrderResponse, status_code=status.HTTP_201_CREATED)
 def create_order_endpoint(
     order_data: OrderCreate,
     db: Session = Depends(get_db),
-    # Inject dependency to get the logged-in user
-    current_user: User = Depends(get_current_active_user)
+    current_user: AuthUser = Depends(get_current_active_user)
 ):
-    """Endpoint to create a new Cash on Delivery order for the authenticated user."""
+    """Endpoint to create a new order for the authenticated user."""
     logger.info(f"Received POST /orders request from user_id={current_user.id}")
     order_service = OrderService(db)
     try:
-        # Pass user_id to the service method
         created_order_model = order_service.create_order(
             order_data=order_data,
             user_id=current_user.id
         )
         logger.info(f"Order {created_order_model.id} created successfully for user {current_user.id}")
-        # FastAPI converts the returned SQLAlchemy model using the schema's Config
         return created_order_model
-    except ValueError as ve: # Catch specific logical errors from service/repo
+    except ValueError as ve:
         logger.error(f"Value error creating order for user {current_user.id}: {ve}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
     except Exception as e:
         logger.error(f"Unexpected error creating order for user {current_user.id}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not process the order due to an internal error.")
 
-
-# --- ADDED: Endpoint to GET order history ---
-# Path is now "/" relative to the "/orders" prefix
+# --- Endpoint to GET order history for the current user ---
 @router.get("/", response_model=List[OrderResponse], status_code=status.HTTP_200_OK)
 def get_order_history_endpoint(
     db: Session = Depends(get_db),
-    # Inject dependency to get the logged-in user
-    current_user: User = Depends(get_current_active_user)
+    current_user: AuthUser = Depends(get_current_active_user)
 ):
     """Endpoint to fetch the order history for the currently authenticated user."""
     logger.info(f"Received GET /orders request for user_id={current_user.id}")
     order_service = OrderService(db)
     try:
-        # Call the service method to get order history for the user
         order_history_models = order_service.get_order_history(user_id=current_user.id)
         logger.info(f"Returning {len(order_history_models)} orders for user {current_user.id}")
-        # FastAPI converts the list of SQLAlchemy models using the schema's Config
         return order_history_models
     except Exception as e:
         logger.error(f"Error fetching order history for user {current_user.id}: {e}", exc_info=True)
@@ -90,4 +99,68 @@ def get_order_history_endpoint(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An internal error occurred while fetching order history."
         )
-# -----------------------------------------
+
+# --- Endpoint to UPDATE order status (Admin Only) ---
+@router.patch("/{order_id}", response_model=OrderResponse, status_code=status.HTTP_200_OK)
+def update_order_status_endpoint(
+    order_id: int,
+    payload: OrderStatusUpdatePayload,
+    db: Session = Depends(get_db),
+    current_user: AuthUser = Depends(get_current_active_user)
+    # Consider injecting OrderService here if complex logic is needed
+):
+    """
+    Endpoint for an ADMIN user to update the status of a specific order.
+    """
+    logger.info(f"Received PATCH /orders/{order_id} request from admin user_id={current_user.id}")
+
+    # --- Authorization Check: Ensure only admins can update ---
+    # Adjust the role check based on your actual User model attribute
+    if not hasattr(current_user, 'role') or current_user.role != "admin":
+         logger.warning(f"Forbidden PATCH /orders/{order_id} attempt by non-admin user_id={current_user.id}")
+         raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to update order status."
+        )
+    # --- End Authorization ---
+
+    # --- Fetch the Order ---
+    # Note: Using direct DB access here. Move to OrderService if preferred.
+    db_order = db.query(Order).filter(Order.id == order_id).first()
+
+    if db_order is None:
+        logger.warning(f"Order with ID {order_id} not found during PATCH request.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Order with ID {order_id} not found."
+        )
+
+    # --- Validate the New Status ---
+    new_status = payload.status.lower() # Ensure consistent casing
+    if new_status not in ORDER_STATUSES_VALUES:
+         logger.warning(f"Invalid status value '{new_status}' received for order {order_id}.")
+         raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid status value: '{payload.status}'. Valid statuses are: {', '.join(ORDER_STATUSES_VALUES)}"
+        )
+
+    # --- Update and Commit ---
+    logger.info(f"Updating order {order_id} status from '{db_order.status}' to '{new_status}'.")
+    db_order.status = new_status # Update the status attribute
+
+    try:
+        db.commit()
+        db.refresh(db_order) # Refresh to get the latest state from DB
+        logger.info(f"Successfully updated status for order {order_id}.")
+        # Return the updated order data (will be serialized by response_model)
+        return db_order
+    except Exception as e:
+        db.rollback() # Rollback transaction on error
+        logger.error(f"Database error updating status for order {order_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update order status due to a database error."
+        )
+
+# Remember to include this router in your main FastAPI application instance (main.py)
+# Example: app.include_router(router)

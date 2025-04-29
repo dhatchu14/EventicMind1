@@ -7,8 +7,8 @@ import { AuthProvider } from '@/contexts/AuthContext';
 import { CartProvider } from '@/components/CartContext';
 
 // UI and Utils
-import { Toaster } from "@/components/ui/sonner";
-import { Loader2 } from 'lucide-react';
+import { Toaster } from "@/components/ui/sonner"; // Assuming this is the correct path
+// import { Loader2 } from 'lucide-react'; // Loader not used directly here
 
 // Core Components
 import Navbar from "@/components/Navbar";
@@ -20,17 +20,17 @@ import SignupPage from "@/components/Signup";
 import BlogPage from "@/components/BlogPage";
 import AboutPage from "@/components/AboutPage";
 import Cartopia from "@/components/HeroSection";
-import OrderHistory from '@/components/OrderHistory';
+import OrderHistory from '@/components/OrderHistory'; // Component to render for /orders
 import Shop from '@/components/Shop';
 import ProductDetails from '@/components/ProductDetails';
 import CartPage from '@/components/CartPage';
 import AdminLoginPage from '@/components/AdminLogin';
 import Dashboard from '@/components/AdminDashboard';
-import Payment from '@/components/Payment'; // <--- 1. IMPORT Payment component
+import Payment from '@/components/Payment';
 
 // Route Protection Components
 import ProtectedRoute from '@/components/ProtectedRoute';
-// import AdminProtectedRoute from '@/components/AdminProtectedRoute';
+// import AdminProtectedRoute from '@/components/AdminProtectedRoute'; // Uncomment if you implement separate admin protection
 
 function App() {
   // DarkMode state and effect (Keep as is)
@@ -55,7 +55,7 @@ function App() {
           <div className={`${darkMode ? "dark" : ""} overflow-x-hidden min-h-screen flex flex-col bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-gray-100`}>
             <Toaster position="top-right" richColors closeButton />
             <Navbar darkMode={darkMode} setDarkMode={setDarkMode} />
-            <main className="flex-grow pt-16">
+            <main className="flex-grow pt-16"> {/* Ensure padding-top matches navbar height */}
               <Routes>
                 {/* Public Routes */}
                 <Route path="/" element={<Cartopia />} />
@@ -67,22 +67,21 @@ function App() {
                 <Route path="/admin/login" element={<AdminLoginPage />} />
 
                 {/* Admin Routes */}
-                {/* <Route element={<AdminProtectedRoute />}> */}
-                  <Route path="/admin/dashboard" element={<Dashboard />} />
-                {/* </Route> */}
+                {/* Consider wrapping admin routes if needed */}
+                <Route path="/admin/dashboard" element={<Dashboard />} />
 
 
                 {/* Protected User Routes */}
                 <Route element={<ProtectedRoute />}>
                   <Route path="/product/:id" element={<ProductDetails />} />
                   <Route path="/cart" element={<CartPage />} />
+                  {/* --- This route correctly renders OrderHistory --- */}
                   <Route path="/orders" element={<OrderHistory />} />
-                  <Route path="/checkout" element={<Payment />} /> {/* <--- 2. ADD this route */}
-                  {/* Add payment processing routes (stripe, cash, razorpay) here if they are separate pages */}
-                   {/* <Route path="/stripe" element={<StripePaymentPage />} /> */}
-                   {/* <Route path="/cash-on-delivery" element={<CodConfirmationPage />} /> */}
-                   {/* <Route path="/razorpay" element={<RazorpayPaymentPage />} /> */}
+                  {/* ------------------------------------------------ */}
+                  <Route path="/checkout" element={<Payment />} />
+                  {/* Other potential protected routes */}
                    {/* <Route path="/order-success" element={<OrderSuccessPage />} /> */}
+                   {/* <Route path="/cash-on-delivery" element={<CodConfirmationPage />} /> */}
                 </Route>
 
                 {/* Optional Catch-all */}

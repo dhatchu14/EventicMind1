@@ -3,9 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+// Removed RadioGroup and RadioGroupItem imports
 import { Label } from "@/components/ui/label";
-import { CreditCard, AlertCircle } from "lucide-react";
+// Removed CreditCard, using Truck instead for COD visual cue
+import { AlertCircle, Truck } from "lucide-react";
 import { useCart } from '@/components/CartContext'; // Ensure this path is correct
 
 const Payment = () => {
@@ -14,9 +15,10 @@ const Payment = () => {
   const shippingFee = cartTotal > 0 ? 10.00 : 0; // Apply shipping only if cart is not empty
   const total = cartTotal + shippingFee;
 
-  const [paymentMethod, setPaymentMethod] = useState("stripe");
-  const [isFormValid, setIsFormValid] = useState(false);
+  // Removed paymentMethod state as it's fixed to Cash on Delivery
+  // const [paymentMethod, setPaymentMethod] = useState("cash"); // No longer needed
 
+  const [isFormValid, setIsFormValid] = useState(false);
   const [formData, setFormData] = useState({
     firstName: "",
     lastName: "",
@@ -81,43 +83,26 @@ const Payment = () => {
     // Store valid form data in localStorage
     localStorage.setItem('deliveryInfo', JSON.stringify(formData));
 
-    // Navigate based on selected payment method
-    switch(paymentMethod) {
-      case "stripe":
-        navigate("/stripe"); // Ensure this route exists
-        break;
-      case "cash":
-        navigate("/cash-on-delivery"); // Ensure this route exists
-        break;
-      case "razorpay":
-        navigate("/razorpay"); // Ensure this route exists
-        break;
-      default:
-        console.warn("Unknown payment method selected:", paymentMethod);
-        navigate("/stripe"); // Default navigation
-    }
+    // Always navigate to cash-on-delivery confirmation page
+    navigate("/cash-on-delivery"); // Ensure this route exists
   };
 
   return (
-    // Added background and dark mode styles
     <div className="bg-gray-100 dark:bg-black min-h-screen py-8 text-gray-900 dark:text-gray-100">
       <main className="container mx-auto px-4">
-         {/* Added a general title for the page */}
         <h1 className="text-3xl font-bold text-center mb-8">Checkout</h1>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
 
           {/* Delivery Information Card */}
-          {/* Changed background/border */}
           <Card className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-sm">
-            {/* Changed border */}
             <CardHeader className="border-b border-gray-200 dark:border-gray-700">
               <CardTitle className="text-xl font-semibold">
                 Delivery Information
               </CardTitle>
             </CardHeader>
             <CardContent className="pt-6">
-              {/* Use form tag for semantic structure */}
-              <form className="space-y-4" onSubmit={handleSubmit} noValidate>
+              {/* Added id="deliveryForm" to link the button */}
+              <form id="deliveryForm" className="space-y-4" onSubmit={handleSubmit} noValidate>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <Label htmlFor="firstName" className="text-sm font-medium mb-1 block">First Name</Label>
@@ -253,29 +238,26 @@ const Payment = () => {
 
                 {/* Form Validation Message */}
                 {!isFormValid && (
-                   // Changed color
                   <div className="flex items-center text-red-600 dark:text-red-400 text-sm mt-4 p-3 bg-red-50 dark:bg-red-900/30 rounded-md border border-red-200 dark:border-red-800/50">
                     <AlertCircle className="h-4 w-4 mr-2 flex-shrink-0" />
                     Please fill in all required delivery fields accurately.
                   </div>
                 )}
-                {/* Submit button moved below payment method for logical flow */}
+                {/* Submit button moved to the other card */}
               </form>
             </CardContent>
           </Card>
 
           {/* Order Summary and Payment Method Card */}
-          {/* Changed background/border */}
           <Card className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-sm">
-             {/* Changed border */}
             <CardHeader className="border-b border-gray-200 dark:border-gray-700">
               <CardTitle className="text-xl font-semibold">
                 Order Summary
               </CardTitle>
             </CardHeader>
             <CardContent className="pt-6">
+              {/* Order Totals */}
               <div className="space-y-2 mb-6">
-                 {/* Changed text colors */}
                 <div className="flex justify-between text-sm">
                   <span className="text-gray-600 dark:text-gray-400">Subtotal:</span>
                   <span className="text-gray-800 dark:text-gray-200">${cartTotal.toFixed(2)}</span>
@@ -284,67 +266,42 @@ const Payment = () => {
                    <span className="text-gray-600 dark:text-gray-400">Shipping Fee:</span>
                    <span className="text-gray-800 dark:text-gray-200">${shippingFee.toFixed(2)}</span>
                 </div>
-                 {/* Changed border color and text styles */}
                 <div className="flex justify-between font-bold text-lg pt-2 border-t border-gray-200 dark:border-gray-700">
                   <span>Total:</span>
                   <span>${total.toFixed(2)}</span>
                 </div>
               </div>
 
-              {/* Payment Method Section */}
-              <div className="mt-6">
+              {/* Payment Method Section - Simplified to only show COD */}
+              <div className="mt-6 border-t border-gray-200 dark:border-gray-700 pt-6">
                 <h3 className="text-lg font-semibold mb-4 flex items-center">
-                  <CreditCard className="mr-2 h-5 w-5" />
-                  Select Payment Method
+                  <Truck className="mr-2 h-5 w-5 text-green-600 dark:text-green-400" /> {/* COD Icon */}
+                  Payment Method
                 </h3>
+                {/* Display that only COD is available */}
+                <div className={`flex items-center space-x-3 border border-green-300 dark:border-green-700 p-3 rounded-md bg-green-50 dark:bg-green-900/30`}>
+                   <Truck className="h-5 w-5 text-green-600 dark:text-green-400 flex-shrink-0" />
+                   <p className="flex-1 text-green-800 dark:text-green-200 font-medium">
+                     Cash on Delivery
+                   </p>
+                </div>
+                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-2 pl-8">
+                   You can pay in cash when your order is delivered.
+                 </p>
 
-                {/* Pass isFormValid to RadioGroup container to control opacity/pointer-events */}
-                <RadioGroup
-                  value={paymentMethod}
-                  onValueChange={setPaymentMethod}
-                  className={`space-y-3 mb-6 ${!isFormValid ? 'opacity-60 pointer-events-none' : ''}`} // Apply opacity and disable pointer events when form is invalid
-                  aria-label="Payment methods" // Accessibility
-                  // removed disabled={!isFormValid} from here, control wrapper instead
-                >
-                  {/* Stripe Option */}
-                   {/* Added cursor-pointer to the container div */}
-                  <div className={`flex items-center space-x-3 border border-gray-300 dark:border-gray-600 p-3 rounded-md transition-colors ${isFormValid ? 'hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer' : 'bg-gray-50 dark:bg-gray-800/50'}`}>
-                    {/* Added cursor-pointer to RadioGroupItem */}
-                    <RadioGroupItem value="stripe" id="stripe" className="cursor-pointer focus:ring-black dark:focus:ring-white border-gray-400 dark:border-gray-500 data-[state=checked]:border-black dark:data-[state=checked]:border-white data-[state=checked]:bg-black dark:data-[state=checked]:bg-white data-[state=checked]:text-white dark:data-[state=checked]:text-black" />
-                    {/* Added cursor-pointer to Label */}
-                    <Label htmlFor="stripe" className="cursor-pointer flex-1 font-medium">Stripe (Credit/Debit Card)</Label>
-                  </div>
-
-                  {/* Cash on Delivery Option */}
-                   {/* Added cursor-pointer to the container div */}
-                  <div className={`flex items-center space-x-3 border border-gray-300 dark:border-gray-600 p-3 rounded-md transition-colors ${isFormValid ? 'hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer' : 'bg-gray-50 dark:bg-gray-800/50'}`}>
-                    {/* Added cursor-pointer to RadioGroupItem */}
-                    <RadioGroupItem value="cash" id="cash" className="cursor-pointer focus:ring-black dark:focus:ring-white border-gray-400 dark:border-gray-500 data-[state=checked]:border-black dark:data-[state=checked]:border-white data-[state=checked]:bg-black dark:data-[state=checked]:bg-white data-[state=checked]:text-white dark:data-[state=checked]:text-black" />
-                    {/* Added cursor-pointer to Label */}
-                    <Label htmlFor="cash" className="cursor-pointer flex-1 font-medium">Cash on Delivery</Label>
-                  </div>
-
-                  {/* Razorpay Option */}
-                   {/* Added cursor-pointer to the container div */}
-                  <div className={`flex items-center space-x-3 border border-gray-300 dark:border-gray-600 p-3 rounded-md transition-colors ${isFormValid ? 'hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer' : 'bg-gray-50 dark:bg-gray-800/50'}`}>
-                    {/* Added cursor-pointer to RadioGroupItem */}
-                    <RadioGroupItem value="razorpay" id="razorpay" className="cursor-pointer focus:ring-black dark:focus:ring-white border-gray-400 dark:border-gray-500 data-[state=checked]:border-black dark:data-[state=checked]:border-white data-[state=checked]:bg-black dark:data-[state=checked]:bg-white data-[state=checked]:text-white dark:data-[state=checked]:text-black" />
-                     {/* Added cursor-pointer to Label */}
-                    <Label htmlFor="razorpay" className="cursor-pointer flex-1 font-medium">Razorpay (UPI, Cards, Netbanking)</Label>
-                  </div>
-                </RadioGroup>
-
-                {/* Submit Button */}
-                <Button
-                  type="submit" // Changed to type submit to work with form tag
-                  // Added cursor-pointer and updated colors/disabled styles
-                  className={`w-full mt-4 bg-black hover:bg-gray-800 dark:bg-white dark:hover:bg-gray-200 text-white dark:text-black ${!isFormValid ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
-                  onClick={handleSubmit} // Still need onClick if not using form's onSubmit directly
-                  disabled={!isFormValid}
-                >
-                  Proceed to {paymentMethod === "stripe" ? "Payment" : paymentMethod === "cash" ? "Confirm Order" : "Razorpay"}
-                </Button>
+                {/* Removed RadioGroup and other payment options */}
               </div>
+
+              {/* Submit Button */}
+              <Button
+                type="submit" // Triggers form submission
+                form="deliveryForm" // Links this button to the form in the other card
+                className={`w-full mt-6 bg-black hover:bg-gray-800 dark:bg-white dark:hover:bg-gray-200 text-white dark:text-black ${!isFormValid ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                disabled={!isFormValid}
+                // onClick is not needed here as type="submit" and form="deliveryForm" handle it via the form's onSubmit
+              >
+                Place Order (Pay on Delivery)
+              </Button>
             </CardContent>
           </Card>
         </div>

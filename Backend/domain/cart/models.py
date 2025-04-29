@@ -2,12 +2,9 @@
 from sqlalchemy import (
     Column, Integer, ForeignKey, UniqueConstraint, CheckConstraint
 )
-from sqlalchemy.orm import relationship # Keep relationship import
+from sqlalchemy.orm import relationship
 from config.db import Base
-# --- REMOVE User import ---
-# from domain.authentication.models import User # No longer needed here
-# Import Product if needed, or use string reference for it too
-from domain.product.models import Product
+# from domain.product.models import Product # Can remove if using string relationship consistently
 
 class CartItem(Base):
     __tablename__ = "cart_items"
@@ -18,18 +15,35 @@ class CartItem(Base):
     prod_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE"), nullable=False, index=True)
     quantity = Column(Integer, nullable=False)
 
-    # --- Use STRINGS for related models ---
+    # --- Use STRINGS for related models to prevent circular imports ---
     user = relationship(
         "User", # <-- Use the class name as a string
-        back_populates="cart_items"
+        back_populates="cart_items" # Assumes User model has 'cart_items = relationship("CartItem", back_populates="user")'
     )
-    # You can use a string for product too if needed
-    # product = relationship("Product")
-    # Or keep the import if Product doesn't import CartItem back
-    product = relationship(Product) # Keep imported Product if no circularity there
-    # --------------------------------------
+    # Use string for Product relationship
+    product = relationship(
+        "Product" # <-- Use the class name as a string
+        # Add back_populates if Product links back, e.g., back_populates="cart_items"
+        # If Product doesn't link back, this is sufficient. Eager loading still works.
+    )
+    # -----------------------------------------------------------------
 
     __table_args__ = (
         UniqueConstraint('user_id', 'prod_id', name='uq_user_product_cart'),
+        # Ensure DB enforces positive quantity (adjust if 0 is allowed for some reason)
         CheckConstraint('quantity > 0', name='check_cart_item_quantity_positive')
     )
+
+# --- Ensure User and Product models are defined elsewhere ---
+# Example structure expected in domain/authentication/models.py:
+# class User(Base):
+#     ...
+#     cart_items = relationship("CartItem", back_populates="user", cascade="all, delete-orphan")
+#     ...
+
+# Example structure expected in domain/product/models.py:
+# class Product(Base):
+#     ...
+#     # If Product needs access to cart items (less common):
+#     # cart_items = relationship("CartItem", back_populates="product")
+#     ...

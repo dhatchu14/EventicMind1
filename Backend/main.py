@@ -43,15 +43,6 @@ except ImportError as e:
     cart_module_imported = False
     logging.warning(f"Could not import cart router: {e}. Cart endpoints will be unavailable.")
 
-# --- NEW: Import Order router ---
-try:
-    # Adjust path if your order module is located elsewhere
-    from domain.order.endpoints import router as order_router # <-- IMPORT NEW ROUTER
-    order_module_imported = True                          # <-- FLAG FOR ORDER MODULE
-    logging.info("Successfully imported order router.")        # <-- LOG SUCCESS
-except ImportError as e:
-    order_module_imported = False
-    logging.warning(f"Could not import order router: {e}. Order/Delivery endpoints will be unavailable.") # <-- LOG FAILURE
 
 
 # --- IMPORTANT ---
@@ -116,41 +107,37 @@ app.add_middleware(
 # --- Include Routers ---
 
 logger.info("Including authentication router...")
-app.include_router(auth_router, prefix="/auth", tags=["Authentication"]) # Added prefix for clarity
+# Consider adding "/api" prefix consistently to all routers if desired
+app.include_router(auth_router, prefix="/auth", tags=["Authentication"])
 
 logger.info("Including user router...")
-app.include_router(user_router, prefix="/users", tags=["Users"]) # Added prefix for clarity
+# Consider adding "/api" prefix consistently to all routers if desired
+app.include_router(user_router, prefix="/users", tags=["Users"])
 
 # --- Include Product Router (Conditionally) ---
 if product_module_imported:
     logger.info("Including product router...")
-    app.include_router(product_router, prefix="/products", tags=["Products"]) # Added prefix
+    # Consider adding "/api" prefix consistently to all routers if desired
+    app.include_router(product_router, prefix="/products", tags=["Products"])
 else:
     logger.warning("Product router not included due to import failure.")
 
 # --- Include Inventory Router (Conditionally) ---
 if inventory_module_imported:
     logger.info("Including inventory router...")
-    app.include_router(inventory_router, prefix="/inventory", tags=["Inventory"]) # Added prefix
+     # Consider adding "/api" prefix consistently to all routers if desired
+    app.include_router(inventory_router, prefix="/inventory", tags=["Inventory"])
 else:
     logger.warning("Inventory router not included due to import failure.")
 
 # --- Include Cart Router (Conditionally) ---
 if cart_module_imported:
     logger.info("Including cart router...")
-    app.include_router(cart_router, prefix="/cart", tags=["Cart"]) # Added prefix
+     # Consider adding "/api" prefix consistently to all routers if desired
+    app.include_router(cart_router, prefix="/cart", tags=["Cart"])
 else:
     logger.warning("Cart router not included due to import failure.")
 
-# --- NEW: Include Order Router (Conditionally) ---
-if order_module_imported:
-    logger.info("Including order router...")
-    # Using the tags defined in order/endpoints.py ("Order & Delivery")
-    # Keeping /delivery and /order at root as defined in endpoints.py for now
-    # Alternatively, add prefix="/orders" here and adjust paths in order/endpoints.py
-    app.include_router(order_router) # <-- INCLUDE NEW ROUTER
-else:
-    logger.warning("Order router not included due to import failure.")
 
 
 # --- Root Endpoint ---
@@ -162,15 +149,7 @@ async def root():
     if inventory_module_imported: modules_loaded.append("Inventory")
     if cart_module_imported: modules_loaded.append("Cart")
     # --- NEW: Add Order to list if loaded ---
-    if order_module_imported: modules_loaded.append("Order") # <-- ADD ORDER MODULE
-    return {
-        "message": "Welcome to the E-commerce API!",
-        "active_modules": modules_loaded,
-        "api_version": app.version, # Show current version
-        "docs_url": app.docs_url, # Show docs URL dynamically
-        "redoc_url": app.redoc_url # Show redoc URL dynamically
-        }
-
+    
 # --- Optional: Uvicorn runner (usually commented out for deployment) ---
 # if __name__ == "__main__":
 #     import uvicorn

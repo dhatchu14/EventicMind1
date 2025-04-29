@@ -1,100 +1,135 @@
-# backend/main.py
 import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-# Assuming config.py provides db and settings similar to previous setup
-# Ensure config.db provides necessary SessionLocal, Base, get_db, init_db
-from config import db, settings
+# --- Setup Logging Early ---
+# Basic config first, might be refined if settings load successfully
+logging.basicConfig(level="INFO", format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__) # Get root logger instance
 
-# Import Authentication routers
-from domain.authentication.endpoints import auth_router, user_router
-
-# Setup basic logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# --- Import Product router ---
+# --- Import Config ---
 try:
-    from domain.product.endpoints import router as product_router
-    product_module_imported = True
-    logging.info("Successfully imported product router.")
-except ImportError:
-    product_module_imported = False
-    logging.warning("Could not import product router. Product endpoints will be unavailable.")
-
-# --- Import Inventory router ---
-try:
-    # Assuming filename is endpoints.py, adjust if necessary
-    from domain.inventory.endpoint import router as inventory_router # Corrected filename assumption
-    inventory_module_imported = True
-    logging.info("Successfully imported inventory router.")
+    from config import db, settings # Adjust path if needed
+    config_imported = True
+    # Refine logging level if specified in settings
+    log_level_str = getattr(settings, "LOG_LEVEL", "INFO").upper()
+    logging.getLogger().setLevel(log_level_str) # Set level on root logger
+    logger.info(f"Successfully imported config module. Log level set to {log_level_str}.")
 except ImportError as e:
-    inventory_module_imported = False
-    # Log the actual error for better debugging
-    logging.warning(f"Could not import inventory router: {e}. Inventory endpoints will be unavailable.")
-
-# --- Import Cart router ---
-try:
-    from domain.cart.endpoints import router as cart_router
-    cart_module_imported = True
-    logging.info("Successfully imported cart router.")
-except ImportError as e:
-    cart_module_imported = False
-    logging.warning(f"Could not import cart router: {e}. Cart endpoints will be unavailable.")
-
-
-
-# --- IMPORTANT ---
-# Ensure all SQLAlchemy models (Auth, User, Product, Inventory, CartItem, Order, Delivery etc.)
-# are implicitly imported via their respective endpoint/service/repo modules
-# BEFORE init_db() is called so they are registered with db.Base.metadata.
-logger.info("Importing models via endpoint modules triggers model registration...")
-
-
-# Initialize Database (create tables if they don't exist)
-# This needs Base to know about ALL models from imported modules
-logger.info("Initializing database...")
-try:
-    db.init_db() # Assumes this uses db.Base.metadata.create_all()
-    logger.info("Database initialization check complete.")
+    logger.critical(f"Failed to import config module: {e}. Cannot initialize database or settings.", exc_info=True)
+    raise RuntimeError(f"Critical configuration import failed: {e}") from e
 except Exception as e:
-    logger.error(f"Database initialization failed: {e}", exc_info=True)
-    # Depending on the error, you might want to exit or prevent app startup
-    raise RuntimeError("Failed to initialize database.") from e
+     logger.critical(f"Unexpected error importing config: {e}", exc_info=True)
+     raise RuntimeError(f"Critical configuration import failed: {e}") from e
 
 
-# --- Update API Metadata ---
+# --- Import Domain Routers and Models ---
+# Define expected modules, their import paths/routers, and associated models
+DOMAIN_MODULES = {
+    "authentication": {"path": "domain.authentication.endpoints", "routers": ["auth_router", "user_router"], "models_module": "domain.authentication.models", "tag": "Authentication/Users"},
+    "product":        {"path": "domain.product.endpoints", "routers": ["router"], "router_var": "product_router", "models_module": "domain.product.models", "tag": "Products", "prefix": "/products"},
+    "inventory":      {"path": "domain.inventory.endpoint", "routers": ["router"], "router_var": "inventory_router", "models_module": "domain.inventory.models", "tag": "Inventory", "prefix": "/inventory"}, # Check 'endpoint' vs 'endpoints'
+    "cart":           {"path": "domain.cart.endpoints", "routers": ["router"], "router_var": "cart_router", "models_module": "domain.cart.models", "tag": "Cart", "prefix": "/cart"},
+    "order":          {"path": "domain.order.endpoints", "routers": ["router"], "router_var": "order_router", "models_module": "domain.order.models", "tag": "Orders", "prefix": ""}, # Order prefix likely handled in its router
+}
+
+imported_routers_map = {}
+modules_imported_flags = {name: False for name in DOMAIN_MODULES}
+
+for module_name, config in DOMAIN_MODULES.items():
+    try:
+        module = __import__(config["path"], fromlist=config["routers"])
+        routers_found = []
+        for router_name in config["routers"]:
+            router_instance = getattr(module, router_name)
+            routers_found.append(router_instance)
+            # Store by specific name if provided (e.g., product_router)
+            if "router_var" in config and router_name == "router":
+                 globals()[config["router_var"]] = router_instance
+            elif router_name == "auth_router": # Specific handling for auth
+                 globals()["auth_router"] = router_instance
+            elif router_name == "user_router":
+                 globals()["user_router"] = router_instance
+
+        imported_routers_map[module_name] = routers_found
+        modules_imported_flags[module_name] = True
+        logger.info(f"Successfully imported {module_name} router(s) from {config['path']}.")
+
+        # --- Attempt to import models right after router import ---
+        if config["models_module"]:
+            try:
+                # This import executes the model definitions, registering them with Base
+                __import__(config["models_module"])
+                logger.info(f"Successfully imported models from {config['models_module']} for {module_name}.")
+            except ImportError as model_e:
+                logger.warning(f"Could not import models from {config['models_module']} for {module_name}: {model_e}. Associated tables might not be created.")
+            except Exception as model_e:
+                 logger.error(f"Error importing models from {config['models_module']} for {module_name}: {model_e}.", exc_info=True)
+
+    except ImportError as e:
+        logger.warning(f"Could not import router module {config['path']} for {module_name}: {e}. Endpoints/models will be unavailable.")
+    except AttributeError as e:
+         logger.warning(f"Could not find expected router(s) in {config['path']} for {module_name}: {e}. Endpoints/models will be unavailable.")
+    except Exception as e:
+        logger.error(f"Unexpected error during {module_name} router import from {config['path']}: {e}.", exc_info=True)
+
+# Use the flags derived from the loop above
+auth_module_imported = modules_imported_flags["authentication"]
+product_module_imported = modules_imported_flags["product"]
+inventory_module_imported = modules_imported_flags["inventory"]
+cart_module_imported = modules_imported_flags["cart"]
+order_module_imported = modules_imported_flags["order"]
+
+
+# --- Model Registration Check (Conceptual Logging) ---
+logger.info("Model registration check complete (models imported alongside routers). Verify DB logs.")
+
+# --- Initialize Database ---
+# This MUST happen AFTER all model files have been imported
+if config_imported and hasattr(db, 'init_db'):
+    logger.info("Initializing database via config.db.init_db()...")
+    try:
+        # Log models known to Base before creation (moved here for clarity)
+        known_table_names = list(db.Base.metadata.tables.keys())
+        logger.info(f"Models known to Base before init_db: {known_table_names}")
+        if 'delivery_info' not in known_table_names or 'orders' not in known_table_names:
+             logger.warning("Order/DeliveryInfo tables not found in Base.metadata before create_all. Check imports.")
+
+        db.init_db() # This calls Base.metadata.create_all(bind=db.engine)
+        logger.info("Database initialization (create_all) completed.")
+    except Exception as e:
+        logger.error(f"Database initialization failed: {e}", exc_info=True)
+        raise RuntimeError("Failed to initialize database.") from e
+# ... (rest of the code: FastAPI app creation, CORS, include routers, root endpoint, events) ...
+
+# --- Create FastAPI App Instance ---
 app = FastAPI(
     title="My E-commerce API",
-    description="API for user authentication, product management, inventory tracking, shopping cart, and order processing.", # Updated Description
-    version="0.5.0", # Updated Version (incremented for order feature)
+    description="API for user authentication, product management, inventory tracking, shopping cart, and order processing with Cash on Delivery payment.",
+    version="1.0.2",
 )
 
-# CORS Middleware Configuration
-# Read origins from settings if available, otherwise use defaults
+# --- CORS Middleware Configuration ---
+logger.info("Configuring CORS middleware...")
+origins = ["http://localhost:5173", "http://localhost:3000"] # Default origins
 try:
-    origins_str = getattr(settings, "ALLOWED_ORIGINS", "")
-    if not origins_str:
-        logger.warning("ALLOWED_ORIGINS not found or empty in settings. Using default CORS origins.")
-        # Set default origins if setting is missing or empty
-        origins = [
-            "http://localhost:5173", # React Vite default
-            "http://localhost:3000", # React CRA default
-            # Add your frontend production URL here for production settings
-            # "https://your-frontend-domain.com",
-        ]
+    if config_imported and hasattr(settings, "ALLOWED_ORIGINS"):
+        origins_str = getattr(settings, "ALLOWED_ORIGINS", "")
+        if origins_str and isinstance(origins_str, str):
+            configured_origins = [origin.strip() for origin in origins_str.split(',') if origin.strip()]
+            if configured_origins:
+                origins = configured_origins
+                logger.info(f"CORS allowed origins loaded from settings: {origins}")
+            else:
+                 logger.warning("ALLOWED_ORIGINS was empty in settings. Using default CORS origins.")
+        elif not origins_str:
+             logger.warning("ALLOWED_ORIGINS was empty or not found in settings. Using default CORS origins.")
+        else:
+            logger.warning(f"ALLOWED_ORIGINS in settings is not a string ('{type(origins_str)}'). Using default CORS origins.")
     else:
-        origins = [origin.strip() for origin in origins_str.split(',')]
-        logger.info(f"CORS allowed origins from settings: {origins}")
-
-except Exception as e: # Catch potential errors reading/parsing settings
+        logger.warning("ALLOWED_ORIGINS not found in settings or config not loaded. Using default CORS origins.")
+except Exception as e:
     logger.error(f"Error processing ALLOWED_ORIGINS from settings: {e}. Using default CORS origins.")
-    origins = [
-        "http://localhost:5173",
-        "http://localhost:3000",
-    ]
-
 
 app.add_middleware(
     CORSMiddleware,
@@ -103,66 +138,60 @@ app.add_middleware(
     allow_methods=["*"], # Allows all standard methods
     allow_headers=["*"], # Allows all headers
 )
+logger.info(f"CORS middleware configured for origins: {origins}")
+
 
 # --- Include Routers ---
+API_PREFIX = "" # Set your desired global API prefix here, e.g., "/api/v1"
 
-logger.info("Including authentication router...")
-# Consider adding "/api" prefix consistently to all routers if desired
-app.include_router(auth_router, prefix="/auth", tags=["Authentication"])
-
-logger.info("Including user router...")
-# Consider adding "/api" prefix consistently to all routers if desired
-app.include_router(user_router, prefix="/users", tags=["Users"])
-
-# --- Include Product Router (Conditionally) ---
-if product_module_imported:
-    logger.info("Including product router...")
-    # Consider adding "/api" prefix consistently to all routers if desired
-    app.include_router(product_router, prefix="/products", tags=["Products"])
+# Include Auth/User Router (Specific Handling)
+if auth_module_imported:
+    auth_routers = imported_routers_map.get("authentication", [])
+    if len(auth_routers) >= 2:
+        logger.info(f"Including authentication router at prefix: {API_PREFIX}/auth")
+        app.include_router(auth_routers[0], prefix=f"{API_PREFIX}/auth", tags=["Authentication"]) # Assuming auth_router is first
+        logger.info(f"Including user router at prefix: {API_PREFIX}/users")
+        app.include_router(auth_routers[1], prefix=f"{API_PREFIX}/users", tags=["Users"]) # Assuming user_router is second
+    else:
+        logger.error("Authentication module loaded, but expected routers (auth_router, user_router) not found correctly in map.")
 else:
-    logger.warning("Product router not included due to import failure.")
+    logger.warning("Authentication/User routers not included due to import failure.")
 
-# --- Include Inventory Router (Conditionally) ---
-if inventory_module_imported:
-    logger.info("Including inventory router...")
-     # Consider adding "/api" prefix consistently to all routers if desired
-    app.include_router(inventory_router, prefix="/inventory", tags=["Inventory"])
-else:
-    logger.warning("Inventory router not included due to import failure.")
+# Include other Domain Routers using the map and flags
+for module_name, config in DOMAIN_MODULES.items():
+    if module_name == "authentication": continue # Already handled
 
-# --- Include Cart Router (Conditionally) ---
-if cart_module_imported:
-    logger.info("Including cart router...")
-     # Consider adding "/api" prefix consistently to all routers if desired
-    app.include_router(cart_router, prefix="/cart", tags=["Cart"])
-else:
-    logger.warning("Cart router not included due to import failure.")
-
+    if modules_imported_flags[module_name]:
+        router_instance = imported_routers_map[module_name][0] # Assuming single router 'router'
+        prefix = config.get("prefix", f"/{module_name}s") # Default prefix convention
+        tag = config.get("tag", module_name.capitalize())
+        logger.info(f"Including {module_name} router at prefix: {API_PREFIX}{prefix}")
+        app.include_router(router_instance, prefix=f"{API_PREFIX}{prefix}", tags=[tag])
+    else:
+        logger.warning(f"{module_name.capitalize()} router not included.")
 
 
 # --- Root Endpoint ---
-@app.get("/", tags=["Root"])
+@app.get(f"{API_PREFIX}/", tags=["Root"])
 async def root():
-    # Updated welcome message including Order processing
-    modules_loaded = ["Authentication", "User"]
-    if product_module_imported: modules_loaded.append("Product")
-    if inventory_module_imported: modules_loaded.append("Inventory")
-    if cart_module_imported: modules_loaded.append("Cart")
-    # --- NEW: Add Order to list if loaded ---
-    
-# --- Optional: Uvicorn runner (usually commented out for deployment) ---
-# if __name__ == "__main__":
-#     import uvicorn
-#     host = getattr(settings, "HOST", "127.0.0.1") # Default to 127.0.0.1 for local dev
-#     port = int(getattr(settings, "PORT", 8000))
-#     reload = bool(getattr(settings, "RELOAD", True))
-#     log_level = getattr(settings, "LOG_LEVEL", "info").lower()
+    modules_loaded = [name.capitalize() for name, loaded in modules_imported_flags.items() if loaded]
+    if "Authentication" in modules_loaded: # Adjust naming if needed
+        modules_loaded.remove("Authentication")
+        modules_loaded = ["Authentication", "User"] + modules_loaded
 
-#     logger.info(f"Starting Uvicorn server on {host}:{port} (Reload: {reload}, LogLevel: {log_level})")
-#     uvicorn.run(
-#         "main:app",
-#         host=host,
-#         port=port,
-#         reload=reload,
-#         log_level=log_level
-#     )
+    return {
+        "message": f"Welcome to the E-commerce API ({app.version})",
+        "active_modules": sorted(list(set(modules_loaded))),
+        "documentation": app.docs_url or "/docs"
+    }
+
+# --- Startup and Shutdown Events ---
+@app.on_event("startup")
+async def startup_event():
+    logger.info("Application startup sequence initiated.")
+    logger.info("Application startup complete.")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    logger.info("Application shutdown sequence initiated.")
+    logger.info("Application shutdown complete.")

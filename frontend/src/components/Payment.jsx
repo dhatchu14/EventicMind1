@@ -1,6 +1,6 @@
 // src/components/Payment.jsx (adjust path as needed)
 
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react"; // Import React if not already
 import { useNavigate } from 'react-router-dom';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,12 +8,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { AlertCircle, Truck } from "lucide-react";
 import { useCart } from '@/components/CartContext'; // Ensure this path is correct
-import { toast } from "sonner"; // <-- Import toast from sonner
+import { toast } from "sonner";
 
 const Payment = () => {
   const navigate = useNavigate();
-  // Assuming clearCart exists in your context if you want to use it
-  const { cartTotal, clearCart } = useCart();
+  // Destructure the API version of the clear cart function
+  const { cartTotal, clearCartAPI } = useCart(); // <-- Use clearCartAPI from context
   const shippingFee = cartTotal > 0 ? 10.00 : 0;
   const total = cartTotal + shippingFee;
 
@@ -32,7 +32,7 @@ const Payment = () => {
   const [error, setError] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Load stored delivery info useEffect... (keep as is)
+  // Load stored delivery info useEffect...
   useEffect(() => {
     const savedInfo = localStorage.getItem('deliveryInfo');
     if (savedInfo) {
@@ -49,7 +49,7 @@ const Payment = () => {
     }
   }, []);
 
-  // Validate form useEffect... (keep as is)
+  // Validate form useEffect...
    useEffect(() => {
     const { firstName, lastName, email, phone, street, city, state, zipCode, country } = formData;
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -69,7 +69,7 @@ const Payment = () => {
     }
    }, [formData, error]);
 
-  // handleChange... (keep as is)
+  // handleChange...
   const handleChange = (e) => {
     const { name, value } = e.target;
     setFormData(prevData => ({
@@ -81,21 +81,20 @@ const Payment = () => {
     }
   };
 
-  // handleSubmit... (modify the success and error parts)
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError(null);
 
     if (!isFormValid) {
       setError("Please fill in all required delivery fields accurately.");
-      toast.error("Please check the delivery information."); // Optionally show error toast
+      toast.error("Please check the delivery information.");
       return;
     }
 
     setIsLoading(true);
 
     const orderData = {
-      delivery_info: { /* ...formData mapping with snake_case... */
+      delivery_info: {
         first_name: formData.firstName.trim(),
         last_name: formData.lastName.trim(),
         email: formData.email.trim(),
@@ -112,53 +111,60 @@ const Payment = () => {
     };
 
     try {
+      // 1. Place the order
       const response = await fetch("http://localhost:8000/orders", { // Ensure URL is correct
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(orderData),
       });
 
       const responseData = await response.json();
 
       if (!response.ok) {
-        // Throw error to be caught below
         throw new Error(responseData.detail || `HTTP error ${response.status}: Failed to create order`);
       }
 
       // --- Success ---
-      toast.success("Order placed successfully!"); // <-- Show success toast
+      toast.success("Order placed successfully!");
 
+      // 2. Clear the cart via context API call
+      // Check if the function exists before calling
+      if (clearCartAPI) {
+        try {
+            console.log("Calling clearCartAPI from Payment component..."); // Add log
+            await clearCartAPI(); // <-- CALL THE API version
+            // Success/Error toast for clearing is handled within clearCartAPI itself
+            console.log("clearCartAPI call completed."); // Add log
+        } catch (clearError) {
+             console.error("Attempt to clear cart via API failed after successful order:", clearError);
+             // Optionally add a specific toast here if needed, but don't block navigation
+             // toast.warning("Order placed, but cart couldn't be cleared automatically.");
+        }
+      } else {
+        // Log a warning if the function isn't available from context
+        console.warn("clearCartAPI function is not available in CartContext!");
+      }
+      // ****************************
+
+      // 3. Save delivery info locally
       localStorage.setItem('deliveryInfo', JSON.stringify(formData));
 
-      // Optional: Clear the cart after successful order placement
-      if (clearCart) { // Check if clearCart function exists
-         clearCart();
-      }
-
-      // Navigate to shop page after a delay
+      // 4. Navigate to shop page after a delay
       setTimeout(() => {
-        navigate("/shop"); // <-- Navigate to shop
-      }, 1500); // 1.5 second delay
+        navigate("/shop");
+      }, 1500); // Adjust delay as needed
 
-    } catch (err) {
+    } catch (err) { // Catch errors from placing the order
       console.error("Error submitting order:", err);
       const errorMessage = err.message || "An unexpected error occurred. Please try again.";
       setError(errorMessage);
-      toast.error(errorMessage); // <-- Show error toast
-      setIsLoading(false); // Ensure loading stops on error
+      toast.error(errorMessage); // Show order placement error
+      setIsLoading(false); // Stop loading ONLY on order placement error
     }
-     // NOTE: Don't put setIsLoading(false) here if you navigate away,
-     // as the component might unmount before the state update completes.
-     // It's better handled in the error case above, or implicitly on navigation.
-     // If you DON'T navigate immediately, put setIsLoading(false) in a finally block.
-     // Since we navigate after timeout, putting it here is okay, but redundant after nav.
-     // Removed from finally block to avoid state update on unmounted component warning.
+    // No finally block for setIsLoading if navigating away
   };
 
-  // Return JSX... (keep the rest of the component structure as is, including the form and button)
-  // Make sure the Button's disabled state correctly reflects `isLoading`
+  // --- Return JSX --- (UI structure remains unchanged from your last version)
   return (
     <div className="bg-gray-100 dark:bg-black min-h-screen py-8  text-gray-900 dark:text-gray-100">
       <main className="container mx-auto px-4">
@@ -173,10 +179,9 @@ const Payment = () => {
               </CardTitle>
             </CardHeader>
             <CardContent className="pt-6">
-               {/* Form JSX (Inputs, Labels, etc.) - No changes needed here based on request */}
-               <form id="deliveryForm" className="space-y-4" onSubmit={handleSubmit} noValidate>
-                 {/* --- All Input fields --- */}
-                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <form id="deliveryForm" className="space-y-4" onSubmit={handleSubmit} noValidate>
+                {/* --- All Input fields --- */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <Label htmlFor="firstName" className="text-sm font-medium mb-1 block">First Name</Label>
                     <Input id="firstName" type="text" placeholder="John" name="firstName" value={formData.firstName} onChange={handleChange} required aria-required="true" className="bg-gray-50 dark:bg-gray-700 border-gray-300 dark:border-gray-600 focus:border-black dark:focus:border-white focus:ring-black dark:focus:ring-white"/>
@@ -220,13 +225,13 @@ const Payment = () => {
                 </div>
 
                 {/* --- Error/Validation Display --- */}
-                 {error && (
+                {error && (
                   <div className="flex items-center text-red-600 dark:text-red-400 text-sm mt-4 p-3 bg-red-50 dark:bg-red-900/30 rounded-md border border-red-200 dark:border-red-800/50">
                     <AlertCircle className="h-4 w-4 mr-2 flex-shrink-0" />
                     {error}
                   </div>
                 )}
-                 {!isFormValid && !error && Object.values(formData).some(val => val !== '') && (
+                {!isFormValid && !error && Object.values(formData).some(val => val !== '') && (
                     <div className="flex items-center text-yellow-600 dark:text-yellow-400 text-sm mt-4 p-3 bg-yellow-50 dark:bg-yellow-900/30 rounded-md border border-yellow-200 dark:border-yellow-800/50">
                         <AlertCircle className="h-4 w-4 mr-2 flex-shrink-0" />
                         Please fill in all required delivery fields accurately.
@@ -243,7 +248,6 @@ const Payment = () => {
                 Order Summary
               </CardTitle>
             </CardHeader>
-             {/* Content (Order Totals, Payment Method Display) - No changes needed here */}
              <CardContent className="pt-6">
                 {/* Order Totals */}
                 <div className="space-y-2 mb-6">
@@ -258,12 +262,12 @@ const Payment = () => {
                     <p className="text-xs text-gray-500 dark:text-gray-400 mt-2 pl-8">You can pay in cash when your order is delivered.</p>
                 </div>
 
-               {/* Submit Button - Updated disabled state and text */}
+               {/* Submit Button */}
                <Button
                  type="submit"
                  form="deliveryForm"
                  className={`w-full mt-6 bg-black hover:bg-gray-800 dark:bg-white dark:hover:bg-gray-200 text-white dark:text-black ${(!isFormValid || isLoading) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
-                 disabled={!isFormValid || isLoading} // Disable if not valid OR loading
+                 disabled={!isFormValid || isLoading}
                >
                  {isLoading ? 'Placing Order...' : 'Place Order (Pay on Delivery)'}
                </Button>

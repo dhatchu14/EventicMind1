@@ -79,7 +79,7 @@ ROUTER_CONFIGS = {
     "ai": {
         "module_path": "domain.ai.endpoints",
         "router_name": "router",
-        "prefix": "/ai",
+        "prefix":"/api/v1/ai",
         "tags": ["AI Features"]
     },
 }

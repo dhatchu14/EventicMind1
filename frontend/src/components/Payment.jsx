@@ -113,7 +113,7 @@ const Payment = () => {
 
     try {
       // 1. Place the order
-      const response = await axiosInstance.post('/orders/', orderData); // Note trailing slash
+      const response = await axiosInstance.post('orders/orders/', orderData); // Note trailing slash, and orders/
       const createdOrder = response.data;    
 
       if (!createdOrder || typeof createdOrder.id === 'undefined') {

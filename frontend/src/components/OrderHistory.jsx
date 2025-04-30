@@ -71,7 +71,7 @@ const OrderHistory = () => {
     setError(null);
     console.log("OrderHistory: Fetching order history...");
     try {
-      const response = await axiosInstance.get('/orders');
+      const response = await axiosInstance.get('orders/orders');
       console.log("OrderHistory: API Response:", response.data);
       const fetchedOrders = response.data;
       if (!Array.isArray(fetchedOrders)) {

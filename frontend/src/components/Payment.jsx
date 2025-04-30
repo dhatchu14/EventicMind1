@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { AlertCircle, Truck } from "lucide-react";
 import { useCart } from '@/components/CartContext'; // Ensure this path is correct
 import { toast } from "sonner";
+import axiosInstance from '../api/axiosInstance';
 
 const Payment = () => {
   const navigate = useNavigate();
@@ -112,20 +113,16 @@ const Payment = () => {
 
     try {
       // 1. Place the order
-      const response = await fetch("http://localhost:8000/orders", { // Ensure URL is correct
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(orderData),
-      });
+      const response = await axiosInstance.post('/orders/', orderData); // Note trailing slash
+      const createdOrder = response.data;    
 
-      const responseData = await response.json();
-
-      if (!response.ok) {
-        throw new Error(responseData.detail || `HTTP error ${response.status}: Failed to create order`);
+      if (!createdOrder || typeof createdOrder.id === 'undefined') {
+        console.error("Order API: Invalid response structure", createdOrder);
+        toast.info("Order placed but response was unusual. Please check order history.");
+      } else {
+        console.log("Order placed successfully:", createdOrder);
+        toast.success("Order placed successfully!");
       }
-
-      // --- Success ---
-      toast.success("Order placed successfully!");
 
       // 2. Clear the cart via context API call
       // Check if the function exists before calling

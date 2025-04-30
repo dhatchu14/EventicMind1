@@ -13,18 +13,11 @@ from .models import Order # <-- Import your Order SQLAlchemy model (adjust path 
 # --- IMPORTANT: Import your ACTUAL authentication dependencies ---
 # Replace these placeholders with your correct paths and function names
 try:
-    # Assuming auth stuff is in a sibling 'authentication' directory
-    from ..authentication.service import get_current_active_user
-    # Make sure this User import points to your ACTUAL SQLAlchemy User model if needed for role checking
-    from ..authentication.models import User as AuthUser # Renamed to avoid conflict if needed
-except ImportError:
-    # Fallback or error if structure is different
-    # Dummy placeholders - REMOVE/REPLACE these in your actual code
-    print("WARNING: Using placeholder auth dependencies. Replace with actual implementation.")
-    AuthUser = type("AuthUser", (), {"id": 1, "role": "admin", "email": "placeholder@example.com"}) # Dummy User type with role
-    def get_current_active_user(): # Dummy dependency
-        print("WARNING: Using placeholder get_current_active_user dependency.")
-        return AuthUser()
+    from ..authentication.models import User as AuthUser  # Real User model
+    from security.jwt import get_current_user           # Function you need
+except ImportError as e:
+    raise ImportError("Failed to import authentication dependencies. Make sure paths are correct.") from e
+
 # --------------------------------------------------------------
 
 # Import get_db - Adjust path if needed
@@ -61,7 +54,7 @@ class OrderStatusUpdatePayload(BaseModel):
 def create_order_endpoint(
     order_data: OrderCreate,
     db: Session = Depends(get_db),
-    current_user: AuthUser = Depends(get_current_active_user)
+    current_user: AuthUser = Depends(get_current_user)
 ):
     """Endpoint to create a new order for the authenticated user."""
     logger.info(f"Received POST /orders request from user_id={current_user.id}")
@@ -84,7 +77,7 @@ def create_order_endpoint(
 @router.get("/", response_model=List[OrderResponse], status_code=status.HTTP_200_OK)
 def get_order_history_endpoint(
     db: Session = Depends(get_db),
-    current_user: AuthUser = Depends(get_current_active_user)
+    current_user: AuthUser = Depends(get_current_user)
 ):
     """Endpoint to fetch the order history for the currently authenticated user."""
     logger.info(f"Received GET /orders request for user_id={current_user.id}")
@@ -106,7 +99,7 @@ def update_order_status_endpoint(
     order_id: int,
     payload: OrderStatusUpdatePayload,
     db: Session = Depends(get_db),
-    current_user: AuthUser = Depends(get_current_active_user)
+    current_user: AuthUser = Depends(get_current_user)
     # Consider injecting OrderService here if complex logic is needed
 ):
     """
@@ -164,3 +157,30 @@ def update_order_status_endpoint(
 
 # Remember to include this router in your main FastAPI application instance (main.py)
 # Example: app.include_router(router)
+@router.get("/admin/all", response_model=List[OrderResponse], status_code=status.HTTP_200_OK)
+def get_all_orders_admin(
+    db: Session = Depends(get_db),
+    current_user: AuthUser = Depends(get_current_user)
+):
+    """
+    Admin endpoint to fetch all orders in the system.
+    """
+    logger.info(f"Admin {current_user.id} requested all orders.")
+
+    if not hasattr(current_user, 'role') or current_user.role != "admin":
+        logger.warning(f"Unauthorized access to all orders by user {current_user.id}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You are not authorized to access all orders."
+        )
+
+    try:
+        orders = db.query(Order).all()
+        logger.info(f"Returning {len(orders)} orders to admin {current_user.id}")
+        return orders
+    except Exception as e:
+        logger.error(f"Error retrieving all orders: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve orders due to a server error."
+        )

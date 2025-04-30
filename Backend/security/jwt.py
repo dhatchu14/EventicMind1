@@ -2,7 +2,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException,status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from pydantic import ValidationError
@@ -22,6 +22,7 @@ ALGORITHM = settings.JWT_ALGORITHM
 ACCESS_TOKEN_EXPIRE_MINUTES = settings.ACCESS_TOKEN_EXPIRE_MINUTES
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    print(f"Creating access token...:{data}")
     to_encode = data.copy()
     if expires_delta:
         expire = datetime.now(timezone.utc) + expires_delta
@@ -39,6 +40,7 @@ def verify_token(token: str, credentials_exception) -> TokenData:
             raise credentials_exception
         # Use the imported TokenData schema
         token_data = TokenData(email=email)
+        print(f"Token verified. Extracted email: {token_data}")
     except JWTError as e:
         print(f"JWT Error: {e}")
         raise credentials_exception
@@ -56,10 +58,13 @@ async def get_current_user(
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    print(f"Token received: {token}")  # 👈 Debug
     token_data = verify_token(token, credentials_exception)
+    print(f"Token email: {token_data.email}")  # 👈 Debug
     # Use the imported UserRepository
-    user_repo = UserRepository(db)
+    user_repo = UserRepository(db)    
     user = user_repo.get_by_email(email=token_data.email)
+    print(f"User fetched: {user}") 
     if user is None:
         raise credentials_exception
     return user

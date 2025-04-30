@@ -171,31 +171,61 @@ const AdminDashboard = () => {
     }, []);
 
     const fetchAllOrders = useCallback(async (showToast = false) => {
-        setAllOrdersLoading(true); setAllOrdersError(null);
+        setAllOrdersLoading(true);
+        setAllOrdersError(null);
         setStats(prev => ({ ...prev, revenue: 0 }));
+    
         try {
             const response = await axiosInstance.get('/orders/orders/admin/all');
             const ordersData = Array.isArray(response.data) ? response.data : [];
+    
             let calculatedTotalRevenue = 0;
+    
             const processedOrders = ordersData.map(order => {
+                console.log("Order data:", order); // 👈 Logs each order to inspect its structure
+    
                 const orderAmount = Number(order.total || 0);
                 calculatedTotalRevenue += orderAmount;
-                const userId = order.user_id || 'N/A';
-                return { id: order.id, userId: userId, amount: orderAmount, status: order.status?.toLowerCase() || 'unknown', date: order.created_at || order.date, rawOrderData: order };
+    
+                // 🔧 Updated line to handle both possible structures
+                const userId = order.user?.id || order.user_id || 'N/A';
+    
+                return {
+                    id: order.id,
+                    userId: userId,
+                    amount: orderAmount,
+                    status: order.status?.toLowerCase() || 'unknown',
+                    date: order.created_at || order.date,
+                    rawOrderData: order
+                };
             }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    
             setAllOrders(processedOrders);
             setStats(prev => ({ ...prev, revenue: calculatedTotalRevenue }));
-            if (showToast && ordersData.length > 0) toast.success(`Refreshed ${processedOrders.length} total orders. Revenue recalculated.`);
-            else if (showToast) toast.info("No orders found to refresh.");
+    
+            if (showToast && ordersData.length > 0) {
+                toast.success(`Refreshed ${processedOrders.length} total orders. Revenue recalculated.`);
+            } else if (showToast) {
+                toast.info("No orders found to refresh.");
+            }
+    
         } catch (err) {
-            console.error("Dashboard: Failed fetch all orders:", err);
-            const errorMsg = err.response?.status === 401 ? "Unauthorized." : err.response?.status === 403 ? "Forbidden." : err.response?.data?.detail || err.message || "Could not load orders.";
-            setAllOrdersError(errorMsg); setAllOrders([]);
+            console.error("Dashboard: Failed to fetch all orders:", err);
+            const errorMsg =
+                err.response?.status === 401
+                    ? "Unauthorized."
+                    : err.response?.status === 403
+                    ? "Forbidden."
+                    : err.response?.data?.detail || err.message || "Could not load orders.";
+            setAllOrdersError(errorMsg);
+            setAllOrders([]);
             setStats(prev => ({ ...prev, revenue: 0 }));
             if (showToast) toast.error(`Error loading orders: ${errorMsg}`);
-        } finally { setTimeout(() => setAllOrdersLoading(false), 200); }
+        } finally {
+            setTimeout(() => setAllOrdersLoading(false), 200);
+        }
     }, []);
-
+    
     const refreshAllData = useCallback(() => {
         toast.info("Refreshing dashboard data...");
         fetchAllOrders(true).then(() => fetchProductsAndInventory(true));

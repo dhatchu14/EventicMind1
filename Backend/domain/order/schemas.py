@@ -48,6 +48,6 @@ class OrderResponse(BaseModel):
     updated_at: Optional[datetime] = None # Add if your Order model has updated_at
 
     # You might also want to add user_id if relevant for the response
-    # user_id: int
+    user_id: int
 
     model_config = ConfigDict(from_attributes=True)

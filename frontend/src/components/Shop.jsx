@@ -17,7 +17,6 @@ const Shop = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState('relevant');
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  // Removed currentUser state as it wasn't directly used for auth after the update
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -34,12 +33,12 @@ const Shop = () => {
       setLoading(true);
       setError(null);
       try {
-        const response = await axiosInstance.get('/products/?limit=100'); // Ensure this endpoint is correct
-        setProducts(response.data || []); // Ensure response.data is an array
+        const response = await axiosInstance.get('/products/?limit=100');
+        setProducts(response.data || []);
       } catch (err) {
         console.error("Failed to fetch products:", err);
         setError(err.response?.data?.detail || "Could not load products. Please try again later.");
-        setProducts([]); // Set to empty array on error
+        setProducts([]);
       } finally {
         setLoading(false);
       }
@@ -48,8 +47,6 @@ const Shop = () => {
   }, []);
 
   // --- Filtering & Sorting Logic ---
-  // Ensure this logic is placed *before* the return statement
-
   const categories = products.length > 0
     ? [...new Set(products.map(product => product.category).filter(Boolean))].sort()
     : [];
@@ -62,36 +59,29 @@ const Shop = () => {
     );
   };
 
-  // --- MOVE THIS BLOCK HERE ---
   const filteredProducts = products.filter(product => {
     const query = searchQuery.toLowerCase();
-    // Add null/undefined checks for safety
     const nameMatch = product.name?.toLowerCase().includes(query) ?? false;
     const descMatch = product.description?.toLowerCase().includes(query) ?? false;
     const categoryMatch = product.category?.toLowerCase().includes(query) ?? false;
     const matchesSearch = nameMatch || descMatch || categoryMatch;
-
     const matchesCategory = selectedCategories.length === 0 || (product.category && selectedCategories.includes(product.category));
     return matchesSearch && matchesCategory;
   });
 
   const sortedProducts = [...filteredProducts].sort((a, b) => {
-    // Add nullish coalescing for safety
     const priceA = a.price ?? 0;
     const priceB = b.price ?? 0;
     const nameA = a.name ?? '';
     const nameB = b.name ?? '';
-
     if (sortBy === 'price-low') return priceA - priceB;
     if (sortBy === 'price-high') return priceB - priceA;
     if (sortBy === 'name') return nameA.localeCompare(nameB);
-    return 0; // 'relevant' - uses filtered order
+    return 0;
   });
-  // --- END OF MOVED BLOCK ---
 
   // --- Navigation & Actions ---
   const goToProductDetails = (productId) => {
-    // Navigate directly. ProtectedRoute in App.jsx handles auth.
     navigate(`/product/${productId}`);
   };
 
@@ -127,7 +117,7 @@ const Shop = () => {
                 <CardTitle className="text-lg font-semibold">Filters</CardTitle>
                 {/* Search Input */}
                 <div className="relative mt-2">
-                   <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-gray-500" />
+                   <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-gray-500 pointer-events-none" /> {/* Added pointer-events-none */}
                    <Input
                      className="pl-8 bg-gray-50 dark:bg-gray-800 border-gray-300 dark:border-gray-600 focus:ring-primary dark:focus:ring-primary focus:border-primary dark:focus:border-primary"
                      placeholder="Search products..."
@@ -145,12 +135,14 @@ const Shop = () => {
                    <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
                      {categories.map(category => (
                        <div key={category} className="flex items-center space-x-2">
+                         {/* Added cursor-pointer to Checkbox */}
                          <Checkbox
                            id={`category-${category}`}
                            checked={selectedCategories.includes(category)}
                            onCheckedChange={() => handleCategoryChange(category)}
-                           className="data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground border-gray-400 dark:border-gray-600 focus:ring-primary"
+                           className="data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground border-gray-400 dark:border-gray-600 focus:ring-primary cursor-pointer"
                          />
+                         {/* Added cursor-pointer to label */}
                          <label htmlFor={`category-${category}`} className="text-sm leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer select-none">
                            {category}
                          </label>
@@ -168,15 +160,17 @@ const Shop = () => {
                        {selectedCategories.map(category => (
                          <Badge key={category} variant="secondary" className="flex items-center gap-1 pl-2 pr-1 py-0.5 bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 border border-gray-300 dark:border-gray-600 text-xs">
                            <span>{category}</span>
+                           {/* Added cursor-pointer to remove button */}
                            <button
-                             className="ml-0.5 p-0.5 rounded-full hover:bg-gray-300 dark:hover:bg-gray-600 focus:outline-none focus:ring-1 focus:ring-primary"
+                             className="ml-0.5 p-0.5 rounded-full hover:bg-gray-300 dark:hover:bg-gray-600 focus:outline-none focus:ring-1 focus:ring-primary cursor-pointer"
                              onClick={() => handleCategoryChange(category)} aria-label={`Remove ${category} filter`} >
                              <X className="h-3 w-3" />
                            </button>
                          </Badge>
                        ))}
                      </div>
-                     <Button variant="ghost" size="sm" className="mt-3 text-xs text-muted-foreground hover:text-primary p-0 h-auto" onClick={() => setSelectedCategories([])}>
+                     {/* Added cursor-pointer to clear categories button */}
+                     <Button variant="ghost" size="sm" className="mt-3 text-xs text-muted-foreground hover:text-primary p-0 h-auto cursor-pointer" onClick={() => setSelectedCategories([])}>
                          Clear selected categories
                      </Button>
                    </div>
@@ -187,20 +181,23 @@ const Shop = () => {
                  <div>
                     <h3 className="font-semibold text-base mb-2">Sort By</h3>
                     <Select value={sortBy} onValueChange={setSortBy}>
-                      <SelectTrigger className="w-full bg-gray-50 dark:bg-gray-800 border-gray-300 dark:border-gray-600 focus:ring-primary dark:focus:ring-primary focus:border-primary dark:focus:border-primary">
+                      {/* Added cursor-pointer to SelectTrigger */}
+                      <SelectTrigger className="w-full bg-gray-50 dark:bg-gray-800 border-gray-300 dark:border-gray-600 focus:ring-primary dark:focus:ring-primary focus:border-primary dark:focus:border-primary cursor-pointer">
                         <SelectValue placeholder="Relevant" />
                       </SelectTrigger>
                       <SelectContent className="bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-700">
-                        <SelectItem value="relevant">Relevant</SelectItem>
-                        <SelectItem value="price-low">Price: Low to High</SelectItem>
-                        <SelectItem value="price-high">Price: High to Low</SelectItem>
-                        <SelectItem value="name">Name (A-Z)</SelectItem>
+                        {/* Added cursor-pointer to SelectItem */}
+                        <SelectItem value="relevant" className="cursor-pointer">Relevant</SelectItem>
+                        <SelectItem value="price-low" className="cursor-pointer">Price: Low to High</SelectItem>
+                        <SelectItem value="price-high" className="cursor-pointer">Price: High to Low</SelectItem>
+                        <SelectItem value="name" className="cursor-pointer">Name (A-Z)</SelectItem>
                       </SelectContent>
                     </Select>
                  </div>
                  {/* Clear All Filters Button */}
-                 {(searchQuery || selectedCategories.length > 0 || sortBy !== 'relevant') && ( // Show clear if sort is also not default
-                    <Button variant="outline" size="sm" className="w-full mt-2 hover:border-primary hover:text-primary" onClick={clearFilters}>
+                 {(searchQuery || selectedCategories.length > 0 || sortBy !== 'relevant') && (
+                    // Button inherently has cursor-pointer, but explicit class is fine
+                    <Button variant="outline" size="sm" className="w-full mt-2 hover:border-primary hover:text-primary cursor-pointer" onClick={clearFilters}>
                         Clear Filters & Sort
                     </Button>
                  )}
@@ -209,7 +206,6 @@ const Shop = () => {
           </aside>
 
           {/* --- Product Grid --- */}
-          {/* Now sortedProducts should be defined here */}
           <section className="w-full md:w-3/4 lg:w-4/5">
             {loading && (
               <div className="flex justify-center items-center h-64">
@@ -222,17 +218,17 @@ const Shop = () => {
                 <AlertTriangle className="h-12 w-12 mx-auto text-red-500 dark:text-red-400 mb-4" />
                 <h3 className="text-xl font-semibold text-red-800 dark:text-red-200">Error Loading Products</h3>
                 <p className="text-sm text-red-600 dark:text-red-300 mt-2">{error}</p>
-                 <Button variant="destructive" size="sm" onClick={() => window.location.reload()} className="mt-4">Reload Page</Button>
+                 {/* Added cursor-pointer to Reload button */}
+                 <Button variant="destructive" size="sm" onClick={() => window.location.reload()} className="mt-4 cursor-pointer">Reload Page</Button>
               </div>
             )}
             {!loading && !error && (
               <>
-                {/* Line 75 or near it is likely this conditional check or the map below */}
                 {sortedProducts.length > 0 ? (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-4 lg:gap-6">
-                    {/* Map over sortedProducts */}
                     {sortedProducts.map(product => (
                       <Card key={product.id} className="overflow-hidden border border-gray-200 dark:border-gray-700 hover:shadow-lg dark:hover:shadow-primary/10 transition-shadow duration-300 bg-white dark:bg-gray-800 flex flex-col group">
+                        {/* Added cursor-pointer to image container div */}
                         <div
                           className="h-52 overflow-hidden bg-gray-100 dark:bg-gray-700 relative cursor-pointer"
                           onClick={() => goToProductDetails(product.id)}
@@ -244,12 +240,12 @@ const Shop = () => {
                             loading="lazy"
                             onError={(e) => { e.target.onerror = null; e.target.src='https://via.placeholder.com/300x220?text=Load+Error'; }}
                           />
-                           {/* Show overlay ONLY if user is NOT logged in */}
                           {!isLoggedIn && (
                             <div className="absolute inset-0 bg-black/60 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 backdrop-blur-sm pointer-events-none group-hover:pointer-events-auto">
+                              {/* Button inherently has cursor-pointer */}
                               <Button
-                                  className="rounded-full px-6 bg-primary hover:bg-primary/90 text-primary-foreground pointer-events-auto"
-                                  data-product-id={product.id} // Pass product id if needed by handler
+                                  className="rounded-full px-6 bg-primary hover:bg-primary/90 text-primary-foreground pointer-events-auto cursor-pointer" // Explicitly added cursor-pointer
+                                  data-product-id={product.id}
                                   onClick={handleLoginClick}
                                   aria-label="Login to view product details"
                               >
@@ -265,15 +261,15 @@ const Shop = () => {
                                 {product.category}
                                </Badge>
                              )}
-                             {/* Ensure price exists and is a number */}
                              <span className="font-bold text-xl text-gray-900 dark:text-white ml-auto">${(typeof product.price === 'number' ? product.price : 0).toFixed(2)}</span>
                           </div>
                           <h3 className="font-semibold text-lg truncate mb-1 group-hover:text-primary" title={product.name}>{product.name || 'Unnamed Product'}</h3>
                           <p className="text-gray-600 dark:text-gray-400 text-sm line-clamp-3 h-[60px]" title={product.description || ''}>{product.description || 'No description available.'}</p>
                         </CardContent>
                         <CardFooter className="pt-0 pb-4 px-4">
+                          {/* Button inherently has cursor-pointer */}
                           <Button
-                            className="w-full group/button bg-primary hover:bg-primary/90 text-primary-foreground"
+                            className="w-full group/button bg-primary hover:bg-primary/90 text-primary-foreground cursor-pointer" // Explicitly added cursor-pointer
                             onClick={() => goToProductDetails(product.id)}
                             aria-label={`View details for ${product.name || 'product'}`}
                            >
@@ -290,7 +286,8 @@ const Shop = () => {
                     <Search className="h-12 w-12 mx-auto text-gray-400 dark:text-gray-500 mb-4" />
                     <h3 className="text-xl font-semibold text-gray-900 dark:text-white">No products match your criteria</h3>
                     <p className="text-sm text-muted-foreground mt-2">Try adjusting your search or filters.</p>
-                    <Button variant="outline" className="mt-6 hover:border-primary hover:text-primary" onClick={clearFilters}>
+                    {/* Button inherently has cursor-pointer */}
+                    <Button variant="outline" className="mt-6 hover:border-primary hover:text-primary cursor-pointer" onClick={clearFilters}>
                       Clear Filters & Search
                     </Button>
                   </div>

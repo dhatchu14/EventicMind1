@@ -1,4 +1,5 @@
 # File: domain/order/endpoints.py
+print("✅ Loaded domain.order.endpoints router")
 import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -98,27 +99,14 @@ def get_order_history_endpoint(
 def update_order_status_endpoint(
     order_id: int,
     payload: OrderStatusUpdatePayload,
-    db: Session = Depends(get_db),
-    current_user: AuthUser = Depends(get_current_user)
-    # Consider injecting OrderService here if complex logic is needed
+    db: Session = Depends(get_db)
 ):
     """
-    Endpoint for an ADMIN user to update the status of a specific order.
+    Endpoint to update the status of a specific order.
     """
-    logger.info(f"Received PATCH /orders/{order_id} request from admin user_id={current_user.id}")
-
-    # --- Authorization Check: Ensure only admins can update ---
-    # Adjust the role check based on your actual User model attribute
-    if not hasattr(current_user, 'role') or current_user.role != "admin":
-         logger.warning(f"Forbidden PATCH /orders/{order_id} attempt by non-admin user_id={current_user.id}")
-         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to update order status."
-        )
-    # --- End Authorization ---
+    logger.info(f"Received PATCH /orders/{order_id} request.")
 
     # --- Fetch the Order ---
-    # Note: Using direct DB access here. Move to OrderService if preferred.
     db_order = db.query(Order).filter(Order.id == order_id).first()
 
     if db_order is None:
@@ -128,55 +116,30 @@ def update_order_status_endpoint(
             detail=f"Order with ID {order_id} not found."
         )
 
-    # --- Validate the New Status ---
-    new_status = payload.status.lower() # Ensure consistent casing
-    if new_status not in ORDER_STATUSES_VALUES:
-         logger.warning(f"Invalid status value '{new_status}' received for order {order_id}.")
-         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid status value: '{payload.status}'. Valid statuses are: {', '.join(ORDER_STATUSES_VALUES)}"
-        )
+    # --- Update the Order Status ---
+    db_order.status = payload.status  # assuming 'status' is part of the payload
 
-    # --- Update and Commit ---
-    logger.info(f"Updating order {order_id} status from '{db_order.status}' to '{new_status}'.")
-    db_order.status = new_status # Update the status attribute
+    # Commit the changes to the database
+    db.commit()
+    db.refresh(db_order)
 
-    try:
-        db.commit()
-        db.refresh(db_order) # Refresh to get the latest state from DB
-        logger.info(f"Successfully updated status for order {order_id}.")
-        # Return the updated order data (will be serialized by response_model)
-        return db_order
-    except Exception as e:
-        db.rollback() # Rollback transaction on error
-        logger.error(f"Database error updating status for order {order_id}: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to update order status due to a database error."
-        )
+    logger.info(f"Successfully updated status for order ID {order_id}.")
 
+    # Return the updated order response
+    return db_order
 # Remember to include this router in your main FastAPI application instance (main.py)
 # Example: app.include_router(router)
+# Example: app.include_router(router)
 @router.get("/admin/all", response_model=List[OrderResponse], status_code=status.HTTP_200_OK)
-def get_all_orders_admin(
-    db: Session = Depends(get_db),
-    current_user: AuthUser = Depends(get_current_user)
-):
+def get_all_orders_admin(db: Session = Depends(get_db)):
     """
-    Admin endpoint to fetch all orders in the system.
+    Public endpoint to fetch all orders in the system (authentication removed).
     """
-    logger.info(f"Admin {current_user.id} requested all orders.")
-
-    if not hasattr(current_user, 'role') or current_user.role != "admin":
-        logger.warning(f"Unauthorized access to all orders by user {current_user.id}")
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You are not authorized to access all orders."
-        )
+    logger.info("Request received to fetch all orders (no auth).")
 
     try:
         orders = db.query(Order).all()
-        logger.info(f"Returning {len(orders)} orders to admin {current_user.id}")
+        logger.info(f"Returning {len(orders)} orders")
         return orders
     except Exception as e:
         logger.error(f"Error retrieving all orders: {e}", exc_info=True)

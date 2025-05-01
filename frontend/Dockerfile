@@ -1,23 +1,18 @@
-FROM node:16
+FROM node:18-alpine
 
-# Set the working directory
 WORKDIR /app
 
-# Copy package.json and install dependencies
+# Copy package.json and package-lock.json
 COPY package*.json ./
+
+# Install dependencies
 RUN npm install
 
-# Copy the rest of the application
+# Copy the rest of the application code
 COPY . .
 
-# Build the React app for production
-RUN npm run build
+# Expose the port Vite runs on
+EXPOSE 5173
 
-# Install a simple web server to serve the build files
-RUN npm install -g serve
-
-# Expose the port
-EXPOSE 3000
-
-# Serve the built app using serve
-CMD ["serve", "-s", "build", "-l", "3000"]
+# Command to run the application
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]

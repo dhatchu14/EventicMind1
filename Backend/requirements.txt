@@ -1,11 +1,13 @@
-# requirements.txt
-fastapi[all]
-uvicorn[standard]
-sqlalchemy
-psycopg2-binary   # Or appropriate driver for your DB (e.g., mysqlclient)
-python-dotenv
+fastapi==0.115.0
+uvicorn==0.30.6
+sqlalchemy==2.0.31
+psycopg2-binary==2.9.9
+python-dotenv==1.0.1
 pydantic[email]
-pydantic-settings # For newer Pydantic settings management
+pydantic-settings
 passlib[bcrypt]
 python-jose[cryptography]
-python-multipart  # For form data like OAuth2PasswordRequestForm
+python-multipart
+kafka-python==2.0.2
+websockets==12.0
+

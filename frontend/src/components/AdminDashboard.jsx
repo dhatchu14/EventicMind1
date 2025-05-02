@@ -1,11 +1,13 @@
-import React, { useState, useEffect, useCallback } from 'react';
+// src/pages/AdminDashboard.jsx (or adjust path as needed)
+
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner'; // Using sonner
 import {
     TrendingUp, Users, ShoppingBag, DollarSign, PackagePlus, ListOrdered,
     Save, LayoutDashboard, BarChartHorizontal, Boxes, Upload, Link as LinkIcon,
     Loader2, RefreshCw, AlertCircle, Eye, Filter, Search, ListChecks, CalendarDays, Package,
-    ServerCrash, CheckCircle, XCircle, Clock, Truck, Ban
+    ServerCrash, CheckCircle, XCircle, Clock, Truck, Ban, Wifi, WifiOff // Added Wifi icons
 } from 'lucide-react';
 
 // Shadcn UI Components
@@ -29,8 +31,7 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/
 import axiosInstance from '../api/axiosInstance';
 
 // --- Import the AI Prediction Card ---
-// Make sure the path is correct for your project structure
-import { AiPredictionCard } from '@/components/AiPredictionCard'; // <<< IMPORT ADDED/VERIFIED
+import { AiPredictionCard } from '@/components/AiPredictionCard';
 
 // Define Chart Colors
 const chartColors = {
@@ -98,8 +99,18 @@ const AdminDashboard = () => {
     const [allOrdersLoading, setAllOrdersLoading] = useState(true);
     const [allOrdersError, setAllOrdersError] = useState(null);
     const [updatingStatusOrderId, setUpdatingStatusOrderId] = useState(null);
+    // --- WebSocket State ---
+    const [isWsConnected, setIsWsConnected] = useState(false);
+    const [wsError, setWsError] = useState(null);
+    const ws = useRef(null); // Use useRef to hold the WebSocket instance
+    // --- WebSocket Reconnection State ---
+    const reconnectTimeoutRef = useRef(null); // Ref to store reconnect timeout ID
+    const retryAttempt = useRef(0); // Ref to track retry attempts
 
     const LOW_STOCK_THRESHOLD = 10;
+    const MAX_RECONNECT_ATTEMPTS = 5; // Max attempts before showing persistent error
+    const RECONNECT_BASE_DELAY = 2000; // Initial delay 2 seconds
+
     const navigate = useNavigate();
 
     // --- Helper Functions ---
@@ -153,12 +164,23 @@ const AdminDashboard = () => {
     const fetchProductsAndInventory = useCallback(async (showToast = false) => {
         setProductLoading(true); setInventoryLoading(true); setProductError(null); setInventoryError(null);
         try {
-            const [productResponse, inventoryResponse] = await Promise.all([ axiosInstance.get('/products/?limit=500'), axiosInstance.get('/inventory/?limit=500') ]);
-            const fetchedProducts = productResponse.data || []; const fetchedInventory = inventoryResponse.data || [];
+            const [productResponse, inventoryResponse] = await Promise.all([
+                axiosInstance.get('/products/?limit=500'),
+                axiosInstance.get('/inventory/?limit=500')
+            ]);
+            const fetchedProducts = productResponse.data || [];
+            const fetchedInventory = inventoryResponse.data || [];
+
             setAdminProducts(fetchedProducts);
+
             const inventoryMap = new Map(fetchedInventory.map(item => [item.prod_id, item.stock]));
-            const combinedItems = fetchedProducts.map(product => ({ id: product.id, name: product.name, stock: inventoryMap.get(product.id) ?? 0 })).sort((a, b) => a.name.localeCompare(b.name));
+            const combinedItems = fetchedProducts.map(product => ({
+                id: product.id,
+                name: product.name,
+                stock: inventoryMap.get(product.id) ?? 0
+            })).sort((a, b) => a.name.localeCompare(b.name));
             setInventoryItems(combinedItems);
+
             if (showToast) toast.success(`Refreshed ${fetchedProducts.length} products & inventory.`);
         } catch (err) {
             console.error("Failed fetch products/inventory:", err);
@@ -166,30 +188,27 @@ const AdminDashboard = () => {
             setProductError(errorMsg); setInventoryError(errorMsg);
             setAdminProducts([]); setInventoryItems([]);
             if (showToast) toast.error(`Error loading data: ${errorMsg}`);
+        } finally {
+            setProductLoading(false); setInventoryLoading(false);
         }
-        finally { setProductLoading(false); setInventoryLoading(false); }
     }, []);
 
     const fetchAllOrders = useCallback(async (showToast = false) => {
         setAllOrdersLoading(true);
         setAllOrdersError(null);
-        setStats(prev => ({ ...prev, revenue: 0 }));
-    
+        // Don't reset revenue here if WS updates it incrementally
+        // setStats(prev => ({ ...prev, revenue: 0 }));
+
         try {
             const response = await axiosInstance.get('/orders/orders/admin/all');
             const ordersData = Array.isArray(response.data) ? response.data : [];
-    
+
             let calculatedTotalRevenue = 0;
-    
             const processedOrders = ordersData.map(order => {
-                console.log("Order data:", order); // 👈 Logs each order to inspect its structure
-    
                 const orderAmount = Number(order.total || 0);
                 calculatedTotalRevenue += orderAmount;
-    
-                // 🔧 Updated line to handle both possible structures
-                const userId = order.user?.id || order.user_id || 'N/A';
-    
+                const userId = order.user_id || order.user?.id || 'N/A';
+
                 return {
                     id: order.id,
                     userId: userId,
@@ -199,69 +218,257 @@ const AdminDashboard = () => {
                     rawOrderData: order
                 };
             }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    
+
             setAllOrders(processedOrders);
-            setStats(prev => ({ ...prev, revenue: calculatedTotalRevenue }));
-    
+            // Update stats with potentially more accurate data from full fetch
+            setStats(prev => ({
+                ...prev,
+                revenue: calculatedTotalRevenue,
+                orders: processedOrders.length
+            }));
+
             if (showToast && ordersData.length > 0) {
                 toast.success(`Refreshed ${processedOrders.length} total orders. Revenue recalculated.`);
             } else if (showToast) {
                 toast.info("No orders found to refresh.");
             }
-    
+
         } catch (err) {
             console.error("Dashboard: Failed to fetch all orders:", err);
             const errorMsg =
-                err.response?.status === 401
-                    ? "Unauthorized."
-                    : err.response?.status === 403
-                    ? "Forbidden."
-                    : err.response?.data?.detail || err.message || "Could not load orders.";
+                err.response?.status === 401 ? "Unauthorized." // Should not happen for this endpoint if public
+                : err.response?.status === 403 ? "Forbidden."
+                : err.response?.data?.detail || err.message || "Could not load orders.";
             setAllOrdersError(errorMsg);
             setAllOrders([]);
-            setStats(prev => ({ ...prev, revenue: 0 }));
+            setStats(prev => ({ ...prev, revenue: 0, orders: 0 })); // Reset on error
             if (showToast) toast.error(`Error loading orders: ${errorMsg}`);
         } finally {
             setTimeout(() => setAllOrdersLoading(false), 200);
         }
     }, []);
-    
+
     const refreshAllData = useCallback(() => {
         toast.info("Refreshing dashboard data...");
-        fetchAllOrders(true).then(() => fetchProductsAndInventory(true));
+        // Fetch orders first, then products/inventory
+        fetchAllOrders(true).then(() => {
+            fetchProductsAndInventory(true);
+        });
     }, [fetchAllOrders, fetchProductsAndInventory]);
 
-    // --- Initial Load ---
+    // --- Initial Load & Authentication Check ---
     useEffect(() => {
+        // This effect primarily checks if the user *looks* like an admin based on localStorage
+        // The actual access control is (or should be) on the backend API endpoints.
+        // For the WebSocket, we're now assuming it's open if the user reaches this page.
         const userString = localStorage.getItem('currentUser');
+        let isAdmin = false;
+        let userObject = null;
         if (userString) {
             try {
-                const user = JSON.parse(userString);
-                if (!user || user.role !== 'admin') navigate('/admin/login'); else setDisplayUser(user);
-            } catch (e) { console.error("Error parsing user data", e); navigate('/admin/login'); }
-        } else { navigate('/admin/login'); }
-        refreshAllData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [navigate]); // Only run on mount/navigation change
+                userObject = JSON.parse(userString);
+                // Basic check for admin role - enhance if needed
+                if (userObject && userObject.role === 'admin') {
+                    isAdmin = true;
+                } else {
+                    console.warn("User data found but role is not 'admin'. Redirecting to login.");
+                    navigate('/admin/login'); // Redirect non-admins
+                }
+            } catch (e) {
+                console.error("Error parsing user data from localStorage", e);
+                navigate('/admin/login'); // Redirect on parsing error
+            }
+        } else {
+            console.log("No user data found in localStorage. Redirecting to login.");
+            navigate('/admin/login'); // Redirect if no user data
+        }
 
-    // --- Action Handlers ---
+        // If checks pass, set the user and fetch data
+        if (isAdmin && JSON.stringify(userObject) !== JSON.stringify(displayUser)) {
+             setDisplayUser(userObject);
+             refreshAllData(); // Fetch data only when admin user is confirmed
+        }
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [navigate]); // Rerun on navigation changes
+
+    // --- WebSocket Connection Logic ---
+    const connectWebSocket = useCallback(() => {
+        // Conditions to check before attempting connection
+        // Now only checks if the user *should* be here (basic check)
+        if (!displayUser || displayUser.role !== 'admin') {
+            console.log("WebSocket: Skipping connection, user not admin or not logged in.");
+            return;
+        }
+        if (ws.current && (ws.current.readyState === WebSocket.OPEN || ws.current.readyState === WebSocket.CONNECTING)) {
+             console.log("WebSocket: Connection attempt skipped, already open or connecting. State:", ws.current.readyState);
+             return;
+        }
+         // Clear any pending reconnect timeout
+         if (reconnectTimeoutRef.current) {
+            clearTimeout(reconnectTimeoutRef.current);
+            reconnectTimeoutRef.current = null;
+        }
+
+        // --- Construct WebSocket URL (No Token) ---
+        const wsBaseUrl = process.env.NODE_ENV === 'production'
+            ? 'wss://your-production-domain.com' // << --- REPLACE WITH YOUR ACTUAL PRODUCTION WSS URL
+            : 'ws://localhost:8000';
+        // REMOVED: ?token=${token}
+        const wsUrl = `${wsBaseUrl}/orders/ws/admin/notifications`;
+
+        console.log(`WebSocket: Attempting public connection #${retryAttempt.current + 1} to: ${wsUrl}`);
+        setWsError('Connecting...'); // Indicate connection attempt
+        ws.current = new WebSocket(wsUrl);
+
+        ws.current.onopen = () => {
+            console.log('WebSocket: Admin connection established (public).');
+            setIsWsConnected(true);
+            setWsError(null); // Clear connecting/error message
+            retryAttempt.current = 0; // Reset retry counter on successful connection
+            toast.success("Real-time notifications connected.", { duration: 2000 });
+        };
+
+        ws.current.onmessage = (event) => {
+            console.log('WebSocket: Message received:', event.data);
+            try {
+                const message = JSON.parse(event.data);
+
+                if (message.type === 'new_order') {
+                    toast.info(
+                        `🚀 New Order #${message.order_id} Received!`,
+                        {
+                            description: `User ID: ${message.user_id || 'N/A'}, Total: ${formatCurrency(message.total)}, Status: ${getStatusText(message.status)}`,
+                            duration: 10000,
+                        }
+                    );
+                    // Update stats immediately
+                    setStats(prev => ({
+                        ...prev,
+                        orders: prev.orders + 1,
+                        revenue: prev.revenue + (Number(message.total) || 0),
+                    }));
+                    // Optional: Refresh full list if needed
+                    // setTimeout(() => fetchAllOrders(false), 1000);
+
+                } else if (message.type === 'status') {
+                    // General status messages from backend (e.g., welcome message)
+                    console.log(`WebSocket Status: ${message.message}`);
+                    // You could still use this for a connection confirmation toast if backend sends one
+                    // if (message.message === 'Admin WS Connected') {
+                    //    toast.success("Real-time notifications active.", { duration: 2000 });
+                    // }
+
+                } else if (message.type === 'ping') {
+                    // Optional: Handle keep-alive pings
+                    // console.log("WebSocket: Ping received.");
+                    // ws.current?.send('{"type": "pong"}');
+                }
+                 else {
+                    console.warn("WebSocket: Received unknown message type:", message.type, message);
+                }
+
+            } catch (error) {
+                console.error('WebSocket: Failed to parse message:', error, 'Data:', event.data);
+                toast.error("Received unreadable notification data.");
+            }
+        };
+
+        ws.current.onerror = (error) => {
+            console.error('WebSocket: Error event occurred:', error);
+            setIsWsConnected(false);
+            // Let onclose handle UI updates and reconnection logic
+        };
+
+        ws.current.onclose = (event) => {
+            console.log(`WebSocket: Connection Closed. Code=${event.code}, Reason='${event.reason}', Clean=${event.wasClean}`);
+            setIsWsConnected(false);
+            ws.current = null; // Nullify the ref
+
+            if (event.code === 1000 || event.code === 1001) { // Normal closure
+                console.log("WebSocket: Closed cleanly.");
+                setWsError(null); // Clear errors
+                retryAttempt.current = 0; // Reset retries
+            } else { // Abnormal closure - Attempt Reconnection
+                let closeReason = event.reason || 'Connection lost';
+                // REMOVED: Specific handling for code 1008 (Auth failure)
+                if (!event.reason && event.code === 1006) {
+                    closeReason = 'Connection timed out or server unavailable';
+                }
+                console.warn(`WebSocket: Connection closed abnormally. Attempting reconnect... (Attempt ${retryAttempt.current + 1})`);
+                setWsError(`Disconnected: ${closeReason}. Retrying...`);
+
+                if (retryAttempt.current < MAX_RECONNECT_ATTEMPTS) {
+                    const delay = RECONNECT_BASE_DELAY * Math.pow(2, retryAttempt.current);
+                    console.log(`WebSocket: Scheduling reconnect in ${delay / 1000}s`);
+                    reconnectTimeoutRef.current = setTimeout(() => {
+                        retryAttempt.current += 1;
+                        connectWebSocket(); // Attempt to reconnect
+                    }, delay);
+                } else {
+                    console.error(`WebSocket: Max reconnect attempts (${MAX_RECONNECT_ATTEMPTS}) reached.`);
+                    setWsError(`Disconnected: ${closeReason}. Max retries reached. Please refresh manually.`);
+                    toast.error(`Failed to reconnect WebSocket after ${MAX_RECONNECT_ATTEMPTS} attempts.`, { duration: 10000 });
+                }
+            }
+        };
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [displayUser]); // Dependency: connectWebSocket depends on displayUser
+
+    // --- WebSocket Connection Trigger Effect ---
+    useEffect(() => {
+        // Trigger connection attempt when displayUser is set and is an admin
+        if (displayUser && displayUser.role === 'admin') {
+            connectWebSocket();
+        }
+
+        // Cleanup function: Clear timeout and close connection on unmount or user change
+        return () => {
+            if (reconnectTimeoutRef.current) {
+                clearTimeout(reconnectTimeoutRef.current);
+                reconnectTimeoutRef.current = null;
+            }
+            if (ws.current) {
+                console.log("WebSocket: Cleaning up connection on unmount/user change.");
+                // Remove listeners first
+                ws.current.onopen = null;
+                ws.current.onmessage = null;
+                ws.current.onerror = null;
+                ws.current.onclose = null;
+                ws.current.close(1000, "Component unmounting or user change"); // Normal closure
+                ws.current = null;
+                setIsWsConnected(false);
+            }
+            retryAttempt.current = 0; // Reset retries on cleanup
+            setWsError(null); // Clear error state on cleanup
+        };
+    }, [connectWebSocket, displayUser]);
+
+
+    // --- Action Handlers (No changes needed below this point for WS auth removal) ---
     const handleStockUpdateAPI = async (productId) => {
         const inputElement = document.getElementById(`stock-update-${productId}`);
         if (!inputElement) return toast.error("Input element not found.");
         const newValue = inputElement.value.trim();
-        if (newValue === '' || isNaN(newValue) || !Number.isInteger(Number(newValue)) || Number(newValue) < 0) return toast.error("Please enter valid non-negative whole number.");
+        if (newValue === '' || isNaN(newValue) || !Number.isInteger(Number(newValue)) || Number(newValue) < 0) {
+            return toast.error("Please enter valid non-negative whole number.");
+        }
         const newStock = parseInt(newValue, 10);
         setUpdatingStockId(productId);
         try {
             const response = await axiosInstance.put(`/inventory/${productId}`, { stock: newStock });
-            setInventoryItems(prevItems => prevItems.map(item => item.id === productId ? { ...item, stock: response.data.stock } : item ));
+            setInventoryItems(prevItems => prevItems.map(item =>
+                item.id === productId ? { ...item, stock: response.data.stock } : item
+            ));
             toast.success(`Stock for ID ${productId} updated to ${response.data.stock}.`);
             inputElement.value = '';
         } catch (error) {
             console.error(`API Error updating stock for ${productId}:`, error);
             toast.error(`Update failed: ${error.response?.data?.detail || "Server Error"}`);
+        } finally {
+            setUpdatingStockId(null);
         }
-        finally { setUpdatingStockId(null); }
     };
 
     const handleOrderStatusUpdate = async (orderId, newStatus) => {
@@ -271,67 +478,125 @@ const AdminDashboard = () => {
         const originalStatus = allOrders[orderIndex]?.status;
         if (newStatus === originalStatus) return;
         setUpdatingStatusOrderId(orderId);
-        setAllOrders(prevOrders => prevOrders.map(order => order.id === orderId ? { ...order, status: newStatus.toLowerCase() } : order));
+        const updatedOrders = allOrders.map(order =>
+            order.id === orderId ? { ...order, status: newStatus.toLowerCase() } : order
+        );
+        setAllOrders(updatedOrders);
         try {
             const correctPath = `/orders/orders/${orderId}`;
             const response = await axiosInstance.patch(correctPath, { status: newStatus });
             const updatedOrderData = response.data;
             toast.success(`Order #${orderId} status updated to ${getStatusText(updatedOrderData.status)}.`);
-            setAllOrders(prevOrders => prevOrders.map(order => order.id === orderId ? { ...order, status: updatedOrderData.status.toLowerCase() } : order));
         } catch (error) {
             console.error(`API Error updating status for order ${orderId}:`, error);
-            const errorMsg = error.response?.status === 404 ? "API endpoint not found." : error.response?.data?.detail || "Server error.";
+            const errorMsg = error.response?.status === 404
+                ? "Order not found or API path incorrect."
+                : error.response?.data?.detail || "Server error during update.";
             toast.error(`Update failed for Order #${orderId}: ${errorMsg}`);
-            setAllOrders(prevOrders => prevOrders.map(order => order.id === orderId ? { ...order, status: originalStatus } : order));
-        } finally { setUpdatingStatusOrderId(null); }
+            setAllOrders(prevOrders => prevOrders.map(order =>
+                order.id === orderId ? { ...order, status: originalStatus } : order
+            ));
+        } finally {
+            setUpdatingStatusOrderId(null);
+        }
     };
 
     const handleProductSubmit = async (event) => {
          event.preventDefault();
-         const isFileMethod = imageUploadMethod === 'file'; const isUrlMethod = imageUploadMethod === 'url';
+         const isFileMethod = imageUploadMethod === 'file';
+         const isUrlMethod = imageUploadMethod === 'url';
          const imageSourceProvided = (isFileMethod && newProductImageFile) || (isUrlMethod && newProductImageUrl.trim() !== '');
-         if (!newProductName || !newProductPrice || !newProductCategory || !imageSourceProvided) return toast.error("Fill required fields (*), including image.");
+         if (!newProductName || !newProductPrice || !newProductCategory || !imageSourceProvided) {
+             return toast.error("Please fill all required fields (*), including providing an image source.");
+         }
          const price = parseFloat(newProductPrice);
-         if (isNaN(price) || price < 0) return toast.error("Enter a valid price (>= 0).");
-         let apiUrlForProduct = null; let canAttemptApi = false;
+         if (isNaN(price) || price < 0) {
+             return toast.error("Please enter a valid, non-negative price.");
+         }
+         let finalImageUrl = null;
          if (isUrlMethod && newProductImageUrl.trim()) {
-             if (isValidHttpUrl(newProductImageUrl.trim())) { apiUrlForProduct = newProductImageUrl.trim(); canAttemptApi = true; }
-             else { return toast.error("Enter a valid image URL (http/https)."); }
-         } else if (isFileMethod && newProductImageFile) { toast.info("File upload via API not implemented. Use URL."); return; }
-         else { return toast.error("Provide image source (URL or File)."); }
-         if (canAttemptApi) {
+             if (isValidHttpUrl(newProductImageUrl.trim())) {
+                 finalImageUrl = newProductImageUrl.trim();
+             } else {
+                 return toast.error("Please enter a valid image URL (starting with http:// or https://).");
+             }
+         } else if (isFileMethod && newProductImageFile) {
+             toast.info("File upload via API is not implemented in this version. Please use the URL option.");
+             return;
+         } else {
+              return toast.error("Please provide an image source (URL or File).");
+         }
+         if (finalImageUrl) {
              setIsSubmittingProduct(true);
-             const apiProductData = { name: newProductName.trim(), description: newProductDescription.trim() || null, price: price, category: newProductCategory.trim() || null, specifications: newProductSpecifications.trim() || null, features: newProductFeatures.trim() || null, image_url: apiUrlForProduct };
+             const apiProductData = {
+                 name: newProductName.trim(),
+                 description: newProductDescription.trim() || null,
+                 price: price,
+                 category: newProductCategory.trim() || null,
+                 specifications: newProductSpecifications.trim() || null,
+                 features: newProductFeatures.trim() || null,
+                 image_url: finalImageUrl
+             };
              try {
-                 const response = await axiosInstance.post('/products/', apiProductData); const newProduct = response.data;
-                 toast.success(`API: Product "${newProduct.name}" (ID: ${newProduct.id}) added!`);
-                 setAdminProducts(prev => [newProduct, ...prev].sort((a, b) => a.name.localeCompare(b.name)));
-                 setInventoryItems(prev => [{ id: newProduct.id, name: newProduct.name, stock: 0 }, ...prev].sort((a, b) => a.name.localeCompare(b.name)));
-                 setNewProductName(''); setNewProductDescription(''); setNewProductPrice(''); setNewProductCategory(''); setNewProductSpecifications(''); setNewProductFeatures(''); setNewProductImageFile(null); setNewProductImageUrl(''); setImageUploadMethod('file');
-                 const fileInput = document.getElementById('productImageFile'); if (fileInput) fileInput.value = '';
-             } catch (error) { console.error("API Error creating product:", error); toast.error(`API Error: ${error.response?.data?.detail || "Failed."}`); }
-             finally { setIsSubmittingProduct(false); }
+                 const response = await axiosInstance.post('/products/', apiProductData);
+                 const newProduct = response.data;
+                 toast.success(`Product "${newProduct.name}" (ID: ${newProduct.id}) added successfully!`);
+                 fetchProductsAndInventory(false);
+                 setNewProductName('');
+                 setNewProductDescription('');
+                 setNewProductPrice('');
+                 setNewProductCategory('');
+                 setNewProductSpecifications('');
+                 setNewProductFeatures('');
+                 setNewProductImageFile(null);
+                 setNewProductImageUrl('');
+                 setImageUploadMethod('file');
+                 const fileInput = document.getElementById('productImageFile');
+                 if (fileInput) fileInput.value = '';
+             } catch (error) {
+                 console.error("API Error creating product:", error);
+                 toast.error(`API Error: ${error.response?.data?.detail || "Failed to add product."}`);
+             } finally {
+                 setIsSubmittingProduct(false);
+             }
          }
     };
 
     const handleImageFileChange = (event) => {
-        if (event.target.files?.[0]) { setNewProductImageFile(event.target.files[0]); setNewProductImageUrl(''); }
-        else { setNewProductImageFile(null); }
+        const file = event.target.files?.[0];
+        if (file) {
+            setNewProductImageFile(file);
+            setNewProductImageUrl('');
+             setImageUploadMethod('file');
+        } else {
+            setNewProductImageFile(null);
+        }
     };
 
     const handleImageUrlChange = (event) => {
-        setNewProductImageUrl(event.target.value);
-        if (event.target.value.trim() !== '') { setNewProductImageFile(null); const fileInput = document.getElementById('productImageFile'); if (fileInput) fileInput.value = ''; }
+        const url = event.target.value;
+        setNewProductImageUrl(url);
+        if (url.trim() !== '') {
+            setNewProductImageFile(null);
+            const fileInput = document.getElementById('productImageFile');
+            if (fileInput) fileInput.value = '';
+             setImageUploadMethod('url');
+        }
     };
 
     const handleImageMethodChange = (value) => {
         setImageUploadMethod(value);
-        if (value === 'file') setNewProductImageUrl('');
-        else { setNewProductImageFile(null); const fileInput = document.getElementById('productImageFile'); if (fileInput) fileInput.value = ''; }
+        if (value === 'file') {
+            setNewProductImageUrl('');
+        } else {
+            setNewProductImageFile(null);
+            const fileInput = document.getElementById('productImageFile');
+            if (fileInput) fileInput.value = '';
+        }
     };
 
-    // --- Chart Data & Configs ---
-    // Keep your actual data definitions
+
+    // --- Chart Data & Configs --- (Mock Data)
     const revenueData = [ { month: "Jan", Online: 4580, InStore: 2340 }, { month: "Feb", Online: 5950, InStore: 3100 }, { month: "Mar", Online: 5237, InStore: 2820 }, { month: "Apr", Online: 6473, InStore: 3290 }, { month: "May", Online: 7209, InStore: 3730 }, { month: "Jun", Online: 7914, InStore: 3840 }, ];
     const orderStatusData = [ { name: "Completed", value: 187, fill: chartColors.green }, { name: "Processing", value: 125, fill: chartColors.orange }, { name: "Pending", value: 95, fill: chartColors.blue }, { name: "Cancelled", value: 43, fill: chartColors.red }, { name: "Refunded", value: 32, fill: chartColors.violet }, ];
     const topCustomersData = [ { name: "J. Smith", value: 2186, fill: chartColors.violet }, { name: "M. Garcia", value: 1905, fill: chartColors.blue }, { name: "D. Wong", value: 1837, fill: chartColors.green }, { name: "S. Johnson", value: 1673, fill: chartColors.orange }, { name: "A. Patel", value: 1509, fill: chartColors.cyan }, { name: "E. Thompson", value: 1314, fill: chartColors.red }, ];
@@ -352,52 +617,57 @@ const AdminDashboard = () => {
       <div className="min-h-screen bg-background pt-8 pb-16 px-4 sm:px-6 lg:px-8">
         <div className="max-w-7xl mx-auto">
           {/* Header */}
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
              <div>
                  <h1 className="text-3xl font-bold tracking-tight text-foreground">Store Dashboard</h1>
-                 <p className="mt-1 text-lg text-muted-foreground"> Welcome back, {displayUser?.name || 'Admin'}. </p>
+                 <p className="mt-1 text-lg text-muted-foreground">
+                    Welcome back, {displayUser?.name || 'Admin'}.
+                 </p>
+                 {/* WebSocket Status Indicator */}
+                 <div className={`flex items-center gap-1.5 text-xs mt-1 transition-colors duration-300 ${
+                     isWsConnected
+                         ? 'text-green-600 dark:text-green-400'
+                         : wsError && wsError !== 'Connecting...'
+                           ? 'text-red-600 dark:text-red-400'
+                           : 'text-amber-600 dark:text-amber-400'
+                 }`}>
+                     {isWsConnected ? <Wifi className="h-3.5 w-3.5" /> : <WifiOff className="h-3.5 w-3.5" />}
+                     <span>{isWsConnected ? 'Real-time updates active' : (wsError || 'Real-time updates inactive')}</span>
+                 </div>
              </div>
-             <Button variant="outline" size="sm" onClick={refreshAllData} disabled={anyLoading} className={anyLoading ? 'cursor-not-allowed' : 'cursor-pointer'}>
+             <Button variant="outline" size="sm" onClick={refreshAllData} disabled={anyLoading} className={`transition-opacity ${anyLoading ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}>
                  <LoaderIf loading={anyLoading} /> <RefreshCw className={`h-4 w-4 ${anyLoading ? 'hidden' : 'mr-2'}`} /> Refresh Data
              </Button>
           </div>
 
+
           {/* Stats Cards */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
-            <StatsCard title="Total Revenue" value={allOrdersLoading ? <Skeleton className="h-7 w-32" /> : formatCurrency(stats.revenue)} icon={DollarSign} description={allOrdersLoading ? 'Calculating...' : 'Sum of all fetched orders'} />
-            <StatsCard title="Total Orders" value={allOrdersLoading ? <Skeleton className="h-7 w-16"/> : allOrders.length} icon={ShoppingBag} description={allOrdersLoading ? 'Loading...' : 'All time'} />
+            <StatsCard title="Total Revenue" value={allOrdersLoading ? <Skeleton className="h-7 w-32" /> : formatCurrency(stats.revenue)} icon={DollarSign} description={allOrdersLoading ? 'Calculating...' : `From ${stats.orders} orders`} />
+            <StatsCard title="Total Orders" value={allOrdersLoading ? <Skeleton className="h-7 w-16"/> : stats.orders} icon={ShoppingBag} description={allOrdersLoading ? 'Loading...' : 'All time fetched'} />
             <StatsCard title="Active Products" value={productLoading ? <Skeleton className="h-7 w-16"/> : adminProducts.length} icon={Boxes} description={productLoading ? 'Loading...' : `${inventoryItems.filter(item => item.stock > 0).length} in stock`} />
           </div>
 
           {/* Main Tabs */}
-          <Tabs defaultValue="overview" className="mb-8"> {/* Default to Overview */}
+          <Tabs defaultValue="overview" className="mb-8">
+            {/* Tabs List */}
             <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 md:grid-cols-5 bg-muted rounded-lg p-1 mb-6 overflow-x-auto">
-               <TabsTrigger value="overview" className="cursor-pointer">Overview</TabsTrigger>
-               <TabsTrigger value="all_orders" className="cursor-pointer">All Orders</TabsTrigger>
-               <TabsTrigger value="products" className="cursor-pointer">Products</TabsTrigger>
-               <TabsTrigger value="inventory" className="cursor-pointer">Inventory</TabsTrigger>
-               <TabsTrigger value="analytics" className="cursor-pointer">Analytics</TabsTrigger>
+               <TabsTrigger value="overview" className="cursor-pointer data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Overview</TabsTrigger>
+               <TabsTrigger value="all_orders" className="cursor-pointer data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">All Orders</TabsTrigger>
+               <TabsTrigger value="products" className="cursor-pointer data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Add Product</TabsTrigger>
+               <TabsTrigger value="inventory" className="cursor-pointer data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Inventory</TabsTrigger>
+               <TabsTrigger value="analytics" className="cursor-pointer data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm">Analytics</TabsTrigger>
             </TabsList>
 
             {/* --- Overview Tab --- */}
-            {/* Added space-y-4 for stacking elements inside the tab content */}
             <TabsContent value="overview" className="space-y-4">
-
-                {/* Grid for the Charts - Placed first */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                   {/* Revenue Trend Chart Card */}
                    <Card>
-                       <CardHeader>
-                           <CardTitle>Revenue Trend</CardTitle>
-                           <CardDescription>Online vs In-Store (Mock)</CardDescription>
-                       </CardHeader>
+                       <CardHeader><CardTitle>Revenue Trend</CardTitle><CardDescription>Online vs In-Store (Mock)</CardDescription></CardHeader>
                        <CardContent className="pl-2">
                            <ChartContainer config={revenueChartConfig} className="aspect-auto h-[250px]">
                                <AreaChart accessibilityLayer data={revenueData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
-                                   <defs>
-                                       <linearGradient id="colorOnline" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={chartColors.blue} stopOpacity={0.8}/><stop offset="95%" stopColor={chartColors.blue} stopOpacity={0}/></linearGradient>
-                                       <linearGradient id="colorInStore" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={chartColors.green} stopOpacity={0.8}/><stop offset="95%" stopColor={chartColors.green} stopOpacity={0}/></linearGradient>
-                                   </defs>
+                                   <defs><linearGradient id="colorOnline" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={chartColors.blue} stopOpacity={0.8}/><stop offset="95%" stopColor={chartColors.blue} stopOpacity={0}/></linearGradient><linearGradient id="colorInStore" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={chartColors.green} stopOpacity={0.8}/><stop offset="95%" stopColor={chartColors.green} stopOpacity={0}/></linearGradient></defs>
                                    <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="hsl(var(--border))"/>
                                    <XAxis dataKey="month" stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} tickMargin={8}/>
                                    <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} tickLine={false} axisLine={false} tickMargin={8} tickFormatter={(value) => `$${value / 1000}k`}/>
@@ -409,70 +679,66 @@ const AdminDashboard = () => {
                            </ChartContainer>
                        </CardContent>
                    </Card>
-                   {/* Top Customers Chart Card */}
                    <Card>
-                       <CardHeader>
-                           <CardTitle>Top Customers by Spend</CardTitle>
-                           <CardDescription>Mock Data</CardDescription>
-                       </CardHeader>
+                       <CardHeader><CardTitle>Top Customers by Spend</CardTitle><CardDescription>Mock Data</CardDescription></CardHeader>
                        <CardContent className="pl-2">
                            <ChartContainer config={customersChartConfig} className="aspect-auto h-[250px]">
                                <RechartsBarChart data={topCustomersData} layout="vertical" margin={{ top: 5, right: 30, left: 10, bottom: 5 }}>
-                                   <CartesianGrid horizontal={false} stroke="hsl(var(--border))" />
-                                   <XAxis type="number" hide />
-                                   <YAxis dataKey="name" type="category" width={60} tickLine={false} axisLine={false} fontSize={11} stroke="hsl(var(--muted-foreground))" />
-                                   <ChartTooltip cursor={{fill: 'hsl(var(--muted)/.5)'}} content={<ChartTooltipContent indicator="line" formatter={(value) => formatCurrency(value)} nameKey="name" />} />
-                                   <Bar dataKey="value" name="Spent" radius={[0, 4, 4, 0]} barSize={20}>
-                                       {topCustomersData.map((entry, index) => (<Rectangle key={`cell-${index}`} fill={entry.fill} />))}
-                                       <LabelList dataKey="value" position="right" offset={8} className="fill-foreground" fontSize={11} formatter={(value) => formatCurrency(value)} />
-                                   </Bar>
+                                    <CartesianGrid horizontal={false} stroke="hsl(var(--border))" />
+                                    <XAxis type="number" hide />
+                                    <YAxis dataKey="name" type="category" width={60} tickLine={false} axisLine={false} fontSize={11} stroke="hsl(var(--muted-foreground))" />
+                                    <ChartTooltip cursor={{fill: 'hsl(var(--muted)/.5)'}} content={<ChartTooltipContent indicator="line" formatter={(value) => formatCurrency(value)} nameKey="name" />} />
+                                    <Bar dataKey="value" name="Spent" radius={[0, 4, 4, 0]} barSize={20}>{topCustomersData.map((entry, index) => (<Rectangle key={`cell-${index}`} fill={entry.fill} />))} <LabelList dataKey="value" position="right" offset={8} className="fill-foreground" fontSize={11} formatter={(value) => formatCurrency(value)} /></Bar>
                                </RechartsBarChart>
                            </ChartContainer>
                        </CardContent>
                    </Card>
                 </div>
-                {/* END of the grid containing the charts */}
-
-                {/* AI Prediction Card - Placed after the chart grid */}
                 <AiPredictionCard />
-                {/* END of AI Prediction Card */}
-
             </TabsContent>
-            {/* END --- Overview Tab --- */}
-
 
             {/* --- All Orders Tab --- */}
             <TabsContent value="all_orders">
                  <Card>
-                    <CardHeader>
-                        <CardTitle>All Customer Orders</CardTitle>
-                        <CardDescription>Monitor and update order status.</CardDescription>
-                    </CardHeader>
+                    <CardHeader><CardTitle>All Customer Orders</CardTitle><CardDescription>Monitor and update order status.</CardDescription></CardHeader>
                     <CardContent>
-                       {allOrdersError && (<div className="mb-4 p-4 border border-destructive bg-destructive/10 text-destructive rounded-md flex items-center gap-3"><AlertCircle className="h-5 w-5 flex-shrink-0" /><span>{allOrdersError}</span><Button variant="destructive" size="sm" onClick={() => fetchAllOrders(true)} className="ml-auto cursor-pointer">Retry</Button></div>)}
+                       {allOrdersError && (
+                            <div className="mb-4 p-4 border border-destructive bg-destructive/10 text-destructive rounded-md flex items-center justify-between gap-3">
+                                <div className="flex items-center gap-3"><AlertCircle className="h-5 w-5 flex-shrink-0" /><span>{allOrdersError}</span></div>
+                                <Button variant="destructive" size="sm" onClick={() => fetchAllOrders(true)} className="ml-auto cursor-pointer">Retry</Button>
+                            </div>
+                        )}
                        <div className="border rounded-md overflow-hidden">
-                           <Table><TableHeader className="bg-muted/50"><TableRow><TableHead className="w-[100px] p-3">Order ID</TableHead><TableHead className="p-3">Customer (User ID)</TableHead><TableHead className="p-3">Date</TableHead><TableHead className="p-3 text-center w-[180px]">Status</TableHead><TableHead className="p-3 text-right">Amount</TableHead></TableRow></TableHeader>
+                           <Table>
+                                <TableHeader className="bg-muted/50">
+                                    <TableRow><TableHead className="w-[100px] p-3">Order ID</TableHead><TableHead className="p-3">Customer (User ID)</TableHead><TableHead className="p-3">Date</TableHead><TableHead className="p-3 text-center w-[180px]">Status</TableHead><TableHead className="p-3 text-right">Amount</TableHead></TableRow>
+                                </TableHeader>
                                 <TableBody>
-                               {allOrdersLoading ? renderOrderSkeletons(5) : allOrders.length === 0 && !allOrdersError ? (<TableRow><TableCell colSpan={5} className="h-32 text-center text-muted-foreground"> No orders found. </TableCell></TableRow> ) : (
-                                   allOrders.map((order) => {
-                                      const isUpdatingStatus = updatingStatusOrderId === order.id;
-                                      return ( <TableRow key={order.id} className={`hover:bg-muted/50 ${isUpdatingStatus ? 'opacity-70' : ''}`}>
-                                           <TableCell className="p-3 font-mono text-xs font-medium cursor-pointer hover:underline" onClick={() => navigate(`/admin/orders/${order.id}`)} title={`View details for Order #${order.id}`}>#{order.id}</TableCell>
-                                           <TableCell className="p-3 font-medium">User ID {order.userId}</TableCell>
-                                           <TableCell className="p-3 text-muted-foreground text-xs">{formatDate(order.date)}</TableCell>
-                                           <TableCell className="p-3 text-center"> <div className="flex items-center justify-center gap-2">
-                                                    <Select value={order.status} onValueChange={(newStatus) => handleOrderStatusUpdate(order.id, newStatus)} disabled={isUpdatingStatus || allOrdersLoading}>
-                                                        <SelectTrigger className={`h-8 text-xs w-[150px] relative ${isUpdatingStatus ? 'pl-8' : ''} ${isUpdatingStatus || allOrdersLoading ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
-                                                            <LoaderIf loading={isUpdatingStatus} className="h-3 w-3 animate-spin absolute left-2 top-1/2 -translate-y-1/2" /> <SelectValue placeholder="Select status..." />
-                                                        </SelectTrigger>
-                                                        <SelectContent><SelectGroup><SelectLabel className="text-xs">Update Status</SelectLabel> {ORDER_STATUSES.map((statusOption) => (<SelectItem key={statusOption.value} value={statusOption.value} className="text-xs cursor-pointer"><div className="flex items-center gap-2">{statusOption.icon && <statusOption.icon className="h-3.5 w-3.5 text-muted-foreground" />}<span>{statusOption.label}</span></div></SelectItem>))} </SelectGroup></SelectContent>
-                                                    </Select> </div>
-                                           </TableCell>
-                                           <TableCell className="p-3 text-right font-medium">{formatCurrency(order.amount)}</TableCell>
-                                       </TableRow> );
-                                   })
-                               )}
-                           </TableBody></Table>
+                                   {allOrdersLoading ? renderOrderSkeletons(5) : allOrders.length === 0 && !allOrdersError ? (<TableRow><TableCell colSpan={5} className="h-32 text-center text-muted-foreground"> No orders found. </TableCell></TableRow> ) : (
+                                       allOrders.map((order) => {
+                                          const isUpdatingStatus = updatingStatusOrderId === order.id;
+                                          return (
+                                           <TableRow key={order.id} className={`hover:bg-muted/50 transition-opacity ${isUpdatingStatus ? 'opacity-60' : ''}`}>
+                                               <TableCell className="p-3 font-mono text-xs font-medium cursor-pointer hover:underline" onClick={() => navigate(`/admin/orders/${order.id}`)} title={`View details for Order #${order.id}`}>#{order.id}</TableCell>
+                                               <TableCell className="p-3 font-medium">User ID {order.userId}</TableCell>
+                                               <TableCell className="p-3 text-muted-foreground text-xs">{formatDate(order.date)}</TableCell>
+                                               <TableCell className="p-3 text-center">
+                                                    <div className="flex items-center justify-center gap-2">
+                                                        <Select value={order.status} onValueChange={(newStatus) => handleOrderStatusUpdate(order.id, newStatus)} disabled={isUpdatingStatus || allOrdersLoading}>
+                                                            <SelectTrigger className={`h-8 text-xs w-[150px] relative transition-opacity ${isUpdatingStatus ? 'pl-8' : ''} ${isUpdatingStatus || allOrdersLoading ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'}`}>
+                                                                <LoaderIf loading={isUpdatingStatus} className="h-3 w-3 animate-spin absolute left-2 top-1/2 -translate-y-1/2" /> <SelectValue placeholder="Select status..." />
+                                                            </SelectTrigger>
+                                                            <SelectContent><SelectGroup><SelectLabel className="text-xs">Update Status</SelectLabel> {ORDER_STATUSES.map((statusOption) => (<SelectItem key={statusOption.value} value={statusOption.value} className="text-xs cursor-pointer"><div className="flex items-center gap-2">{statusOption.icon && <statusOption.icon className="h-3.5 w-3.5 text-muted-foreground" />}<span>{statusOption.label}</span></div></SelectItem>))} </SelectGroup></SelectContent>
+                                                        </Select>
+                                                    </div>
+                                               </TableCell>
+                                               <TableCell className="p-3 text-right font-medium">{formatCurrency(order.amount)}</TableCell>
+                                           </TableRow>
+                                          );
+                                       })
+                                   )}
+                               </TableBody>
+                           </Table>
                        </div>
                     </CardContent>
                  </Card>
@@ -481,27 +747,43 @@ const AdminDashboard = () => {
             {/* --- Inventory Tab --- */}
             <TabsContent value="inventory">
                 <Card>
-                  <CardHeader>
-                      <CardTitle>Inventory Management</CardTitle>
-                      <CardDescription> Track and update product stock levels. Low stock: {LOW_STOCK_THRESHOLD} units or less.</CardDescription>
-                  </CardHeader>
+                  <CardHeader><CardTitle>Inventory Management</CardTitle><CardDescription> Track and update product stock levels. Low stock: {LOW_STOCK_THRESHOLD} units or less.</CardDescription></CardHeader>
                    <CardContent>
-                     {inventoryError && (<div className="mb-4 p-4 border border-destructive bg-destructive/10 text-destructive rounded-md flex items-center gap-3"><AlertCircle className="h-5 w-5 flex-shrink-0" /><span>{inventoryError}</span><Button variant="destructive" size="sm" onClick={() => fetchProductsAndInventory(true)} className="ml-auto cursor-pointer">Retry</Button></div>)}
+                     {inventoryError && (
+                        <div className="mb-4 p-4 border border-destructive bg-destructive/10 text-destructive rounded-md flex items-center justify-between gap-3">
+                             <div className="flex items-center gap-3"><AlertCircle className="h-5 w-5 flex-shrink-0" /><span>{inventoryError}</span></div>
+                            <Button variant="destructive" size="sm" onClick={() => fetchProductsAndInventory(true)} className="ml-auto cursor-pointer">Retry</Button>
+                        </div>
+                      )}
                      <div className="border rounded-md overflow-hidden">
-                       <Table><TableHeader className="bg-muted/50"><TableRow><TableHead className="p-3">Product Name (ID)</TableHead><TableHead className="p-3 text-center w-[100px]">Stock</TableHead><TableHead className="p-3 text-center w-[120px]">Status</TableHead><TableHead className="p-3 text-center w-[240px]">Set New Stock Total</TableHead></TableRow></TableHeader>
-                         <TableBody>
-                            {(inventoryLoading || productLoading) && renderInventorySkeletons(5)}
-                            {!(inventoryLoading || productLoading) && inventoryItems.length === 0 && !inventoryError && (<TableRow><TableCell colSpan={4} className="h-24 text-center text-muted-foreground">No products found.</TableCell></TableRow>)}
-                            {!(inventoryLoading || productLoading) && inventoryItems.map((item) => {
-                               const status = getStockStatus(item.stock); const isUpdating = updatingStockId === item.id;
-                               return ( <TableRow key={item.id} className={`hover:bg-muted/50 ${isUpdating ? 'opacity-60' : ''}`}>
-                                       <TableCell className="p-3 font-medium">{item.name} <span className="text-xs text-muted-foreground font-mono ml-1">(ID: {item.id})</span></TableCell>
-                                       <TableCell className="p-3 text-center font-semibold text-lg">{item.stock}</TableCell>
-                                       <TableCell className="p-3 text-center"><Badge variant={status.variant} className={`text-xs px-2 py-0.5`}>{status.text}</Badge></TableCell>
-                                       <TableCell className="p-3"><form onSubmit={(e) => { e.preventDefault(); handleStockUpdateAPI(item.id); }} className="flex justify-center items-center gap-2"><Input id={`stock-update-${item.id}`} type="number" min="0" step="1" placeholder="Qty" className="h-9 w-20 text-sm" disabled={isUpdating} required /><Button type="submit" variant="outline" size="icon" className={`h-9 w-9 text-primary hover:text-primary-foreground hover:bg-primary ${isUpdating ? 'cursor-not-allowed' : 'cursor-pointer'}`} disabled={isUpdating} title={`Update stock for ${item.name}`}>{isUpdating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}</Button></form></TableCell>
-                                   </TableRow> );
-                           })}
-                         </TableBody></Table>
+                       <Table>
+                            <TableHeader className="bg-muted/50">
+                                <TableRow><TableHead className="p-3">Product Name (ID)</TableHead><TableHead className="p-3 text-center w-[100px]">Stock</TableHead><TableHead className="p-3 text-center w-[120px]">Status</TableHead><TableHead className="p-3 text-center w-[240px]">Set New Stock Total</TableHead></TableRow>
+                            </TableHeader>
+                            <TableBody>
+                                {(inventoryLoading || productLoading) && renderInventorySkeletons(5)}
+                                {!(inventoryLoading || productLoading) && inventoryItems.length === 0 && !inventoryError && (<TableRow><TableCell colSpan={4} className="h-24 text-center text-muted-foreground">No products found.</TableCell></TableRow>)}
+                                {!(inventoryLoading || productLoading) && inventoryItems.map((item) => {
+                                   const stockStatus = getStockStatus(item.stock);
+                                   const isUpdating = updatingStockId === item.id;
+                                   return (
+                                    <TableRow key={item.id} className={`hover:bg-muted/50 transition-opacity ${isUpdating ? 'opacity-60' : ''}`}>
+                                           <TableCell className="p-3 font-medium">{item.name} <span className="text-xs text-muted-foreground font-mono ml-1">(ID: {item.id})</span></TableCell>
+                                           <TableCell className="p-3 text-center font-semibold text-lg">{item.stock}</TableCell>
+                                           <TableCell className="p-3 text-center"><Badge variant={stockStatus.variant} className={`text-xs px-2 py-0.5`}>{stockStatus.text}</Badge></TableCell>
+                                           <TableCell className="p-3">
+                                                <form onSubmit={(e) => { e.preventDefault(); handleStockUpdateAPI(item.id); }} className="flex justify-center items-center gap-2">
+                                                    <Input id={`stock-update-${item.id}`} type="number" min="0" step="1" placeholder="Qty" className="h-9 w-20 text-sm" disabled={isUpdating} required/>
+                                                    <Button type="submit" variant="outline" size="icon" className={`h-9 w-9 text-primary hover:text-primary-foreground hover:bg-primary transition-opacity ${isUpdating ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'}`} disabled={isUpdating} title={`Update stock for ${item.name}`}>
+                                                        {isUpdating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                                                    </Button>
+                                                </form>
+                                           </TableCell>
+                                       </TableRow>
+                                    );
+                               })}
+                            </TableBody>
+                       </Table>
                      </div>
                    </CardContent>
                 </Card>
@@ -510,39 +792,31 @@ const AdminDashboard = () => {
             {/* --- Add Product Tab --- */}
             <TabsContent value="products">
                 <Card>
-                  <CardHeader>
-                      <CardTitle>Add New Product</CardTitle>
-                      <CardDescription>Enter product details. Required fields marked <span className="text-destructive">*</span>.</CardDescription>
-                  </CardHeader>
+                  <CardHeader><CardTitle>Add New Product</CardTitle><CardDescription>Enter product details. Required fields marked <span className="text-destructive">*</span>.</CardDescription></CardHeader>
                   <CardContent>
                     <form onSubmit={handleProductSubmit} className="space-y-6">
-                        {/* Basic Info */}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <div className="space-y-2"><Label htmlFor="productName" className="cursor-pointer">Product Name <span className="text-destructive">*</span></Label><Input id="productName" value={newProductName} onChange={(e) => setNewProductName(e.target.value)} placeholder="e.g., Wireless Ergonomic Mouse" required disabled={isSubmittingProduct}/></div>
-                            <div className="space-y-2"><Label htmlFor="productPrice" className="cursor-pointer">Price (USD) <span className="text-destructive">*</span></Label><Input id="productPrice" type="number" value={newProductPrice} onChange={(e) => setNewProductPrice(e.target.value)} placeholder="e.g., 49.99" step="0.01" min="0" required disabled={isSubmittingProduct}/></div>
+                            <div className="space-y-2"><Label htmlFor="productName" className={isSubmittingProduct ? 'cursor-not-allowed' : 'cursor-pointer'}>Product Name <span className="text-destructive">*</span></Label><Input id="productName" value={newProductName} onChange={(e) => setNewProductName(e.target.value)} placeholder="e.g., Wireless Ergonomic Mouse" required disabled={isSubmittingProduct}/></div>
+                            <div className="space-y-2"><Label htmlFor="productPrice" className={isSubmittingProduct ? 'cursor-not-allowed' : 'cursor-pointer'}>Price (USD) <span className="text-destructive">*</span></Label><Input id="productPrice" type="number" value={newProductPrice} onChange={(e) => setNewProductPrice(e.target.value)} placeholder="e.g., 49.99" step="0.01" min="0" required disabled={isSubmittingProduct}/></div>
                         </div>
-                         <div className="space-y-2"><Label htmlFor="productCategory" className="cursor-pointer">Category <span className="text-destructive">*</span></Label><Input id="productCategory" value={newProductCategory} onChange={(e) => setNewProductCategory(e.target.value)} placeholder="e.g., Electronics, Accessories" required disabled={isSubmittingProduct}/></div>
-                        {/* Description */}
-                        <div className="space-y-2"><Label htmlFor="productDescription" className="cursor-pointer">Description</Label><Textarea id="productDescription" value={newProductDescription} onChange={(e) => setNewProductDescription(e.target.value)} placeholder="Detailed description..." rows={4} disabled={isSubmittingProduct}/></div>
-                        {/* Specs & Features */}
-                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <div className="space-y-2"><Label htmlFor="productSpecifications" className="cursor-pointer">Specifications</Label><Textarea id="productSpecifications" value={newProductSpecifications} onChange={(e) => setNewProductSpecifications(e.target.value)} placeholder="e.g., Size: ..., Weight: ..." rows={3} disabled={isSubmittingProduct}/></div>
-                             <div className="space-y-2"><Label htmlFor="productFeatures" className="cursor-pointer">Key Features</Label><Textarea id="productFeatures" value={newProductFeatures} onChange={(e) => setNewProductFeatures(e.target.value)} placeholder="e.g., - Feature 1\n- Feature 2" rows={3} disabled={isSubmittingProduct}/></div>
+                        <div className="space-y-2"><Label htmlFor="productCategory" className={isSubmittingProduct ? 'cursor-not-allowed' : 'cursor-pointer'}>Category <span className="text-destructive">*</span></Label><Input id="productCategory" value={newProductCategory} onChange={(e) => setNewProductCategory(e.target.value)} placeholder="e.g., Electronics, Accessories" required disabled={isSubmittingProduct}/></div>
+                        <div className="space-y-2"><Label htmlFor="productDescription" className={isSubmittingProduct ? 'cursor-not-allowed' : 'cursor-pointer'}>Description</Label><Textarea id="productDescription" value={newProductDescription} onChange={(e) => setNewProductDescription(e.target.value)} placeholder="Detailed description of the product..." rows={4} disabled={isSubmittingProduct}/></div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div className="space-y-2"><Label htmlFor="productSpecifications" className={isSubmittingProduct ? 'cursor-not-allowed' : 'cursor-pointer'}>Specifications</Label><Textarea id="productSpecifications" value={newProductSpecifications} onChange={(e) => setNewProductSpecifications(e.target.value)} placeholder="e.g., Size: 10x5x3 cm\nWeight: 150g\nMaterial: ABS Plastic" rows={3} disabled={isSubmittingProduct}/></div>
+                            <div className="space-y-2"><Label htmlFor="productFeatures" className={isSubmittingProduct ? 'cursor-not-allowed' : 'cursor-pointer'}>Key Features</Label><Textarea id="productFeatures" value={newProductFeatures} onChange={(e) => setNewProductFeatures(e.target.value)} placeholder="List key selling points, one per line:\n- Feature 1\n- Feature 2\n- Long battery life" rows={3} disabled={isSubmittingProduct}/></div>
                         </div>
-                         {/* Image Upload */}
-                         <Card className="bg-muted/30 border-dashed">
-                            <CardHeader className="pb-3"><CardTitle className="text-base">Product Image <span className="text-destructive">*</span></CardTitle><CardDescription>Choose upload method.</CardDescription></CardHeader>
+                        <Card className="bg-muted/30 border-dashed">
+                            <CardHeader className="pb-3"><CardTitle className="text-base">Product Image <span className="text-destructive">*</span></CardTitle><CardDescription>Choose upload method. URL is recommended.</CardDescription></CardHeader>
                             <CardContent className="space-y-4">
-                                <RadioGroup value={imageUploadMethod} onValueChange={handleImageMethodChange} className="flex space-x-4" disabled={isSubmittingProduct}>
-                                    <div className="flex items-center space-x-2"><RadioGroupItem value="file" id="imageFileMethod" className={isSubmittingProduct ? 'cursor-not-allowed' : 'cursor-pointer'}/><Label htmlFor="imageFileMethod" className={`flex items-center gap-1 ${isSubmittingProduct ? 'cursor-not-allowed' : 'cursor-pointer'}`}><Upload className="w-4 h-4 mr-1"/>Upload File</Label></div>
-                                    <div className="flex items-center space-x-2"><RadioGroupItem value="url" id="imageUrlMethod" className={isSubmittingProduct ? 'cursor-not-allowed' : 'cursor-pointer'}/><Label htmlFor="imageUrlMethod" className={`flex items-center gap-1 ${isSubmittingProduct ? 'cursor-not-allowed' : 'cursor-pointer'}`}><LinkIcon className="w-4 h-4 mr-1"/>Use URL</Label></div>
+                                <RadioGroup value={imageUploadMethod} onValueChange={handleImageMethodChange} className="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-4" disabled={isSubmittingProduct}>
+                                    <div className="flex items-center space-x-2"><RadioGroupItem value="url" id="imageUrlMethod" className={isSubmittingProduct ? 'cursor-not-allowed' : 'cursor-pointer'}/><Label htmlFor="imageUrlMethod" className={`flex items-center gap-1 ${isSubmittingProduct ? 'cursor-not-allowed' : 'cursor-pointer'}`}><LinkIcon className="w-4 h-4 mr-1"/>Use Image URL</Label></div>
+                                     <div className="flex items-center space-x-2"><RadioGroupItem value="file" id="imageFileMethod" className={isSubmittingProduct ? 'cursor-not-allowed' : 'cursor-pointer'}/><Label htmlFor="imageFileMethod" className={`flex items-center gap-1 ${isSubmittingProduct ? 'cursor-not-allowed' : 'cursor-pointer'}`}><Upload className="w-4 h-4 mr-1"/>Upload File (Disabled)</Label></div>
                                 </RadioGroup>
-                                {imageUploadMethod === 'file' && ( <div className="space-y-2"><Label htmlFor="productImageFile" className={isSubmittingProduct ? 'cursor-not-allowed' : 'cursor-pointer'}>Select Image File</Label><Input id="productImageFile" type="file" onChange={handleImageFileChange} accept="image/png, image/jpeg, image/webp" disabled={isSubmittingProduct} />{newProductImageFile && <p className="text-xs text-muted-foreground">Selected: {newProductImageFile.name}</p>}<p className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1"><AlertCircle className="w-3 h-3"/> File upload via API currently disabled.</p></div> )}
-                                {imageUploadMethod === 'url' && ( <div className="space-y-2"><Label htmlFor="productImageUrl" className="cursor-pointer">Image URL</Label><Input id="productImageUrl" type="url" value={newProductImageUrl} onChange={handleImageUrlChange} placeholder="https://example.com/image.jpg" disabled={isSubmittingProduct} required={imageUploadMethod === 'url'}/></div> )}
+                                {imageUploadMethod === 'url' && ( <div className="space-y-2 pt-2"><Label htmlFor="productImageUrl" className={isSubmittingProduct ? 'cursor-not-allowed' : 'cursor-pointer'}>Image URL <span className="text-destructive">*</span></Label><Input id="productImageUrl" type="url" value={newProductImageUrl} onChange={handleImageUrlChange} placeholder="https://example.com/path/to/your/image.jpg" disabled={isSubmittingProduct} required={imageUploadMethod === 'url'}/>{newProductImageUrl && !isValidHttpUrl(newProductImageUrl) && <p className="text-xs text-destructive">Please enter a valid URL (http/https).</p>}</div> )}
+                                {imageUploadMethod === 'file' && ( <div className="space-y-2 pt-2"><Label htmlFor="productImageFile" className={isSubmittingProduct ? 'cursor-not-allowed text-muted-foreground' : 'cursor-pointer'}>Select Image File <span className="text-destructive">*</span></Label><Input id="productImageFile" type="file" onChange={handleImageFileChange} accept="image/png, image/jpeg, image/webp" disabled className="cursor-not-allowed"/>{newProductImageFile && <p className="text-xs text-muted-foreground">Selected: {newProductImageFile.name}</p>}<p className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1 pt-1"><AlertCircle className="w-3 h-3"/> File upload via API is currently disabled. Please use the URL option above.</p></div> )}
                             </CardContent>
                         </Card>
-                        {/* Submit Button */}
-                        <div className="flex justify-end"><Button type="submit" disabled={isSubmittingProduct} className={isSubmittingProduct ? 'cursor-not-allowed' : 'cursor-pointer'}><LoaderIf loading={isSubmittingProduct} /><PackagePlus className={`h-4 w-4 ${isSubmittingProduct ? 'hidden' : 'mr-2'}`} />Add Product</Button></div>
+                        <div className="flex justify-end pt-4"><Button type="submit" disabled={isSubmittingProduct} className={`transition-opacity ${isSubmittingProduct ? 'cursor-not-allowed opacity-70' : 'cursor-pointer'}`}><LoaderIf loading={isSubmittingProduct} /><PackagePlus className={`h-4 w-4 ${isSubmittingProduct ? 'hidden' : 'mr-2'}`} />Add Product</Button></div>
                     </form>
                   </CardContent>
                 </Card>
@@ -551,13 +825,9 @@ const AdminDashboard = () => {
             {/* --- Analytics Tab --- */}
             <TabsContent value="analytics">
                 <Card>
-                    <CardHeader>
-                        <CardTitle>Store Analytics</CardTitle>
-                        <CardDescription>Visual summary (Mock Data)</CardDescription>
-                    </CardHeader>
+                    <CardHeader><CardTitle>Store Analytics</CardTitle><CardDescription>Visual summary (Mock Data)</CardDescription></CardHeader>
                     <CardContent className="space-y-6">
                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                          {/* Order Status Chart */}
                           <Card className="border shadow-sm">
                               <CardHeader className="p-4 pb-2"><CardTitle className="text-base font-medium">Order Status Distribution</CardTitle></CardHeader>
                               <CardContent className="p-0 pb-4 pl-2 h-[250px]">
@@ -568,7 +838,6 @@ const AdminDashboard = () => {
                                   </ChartContainer>
                               </CardContent>
                           </Card>
-                          {/* New Customers Chart */}
                           <Card className="border shadow-sm">
                               <CardHeader className="p-4 pb-2 items-center"><CardTitle className="text-base font-medium">New Customers Trend</CardTitle></CardHeader>
                               <CardContent className="p-0 pb-4 h-[250px] flex items-center justify-center">

@@ -1,4 +1,3 @@
-
 services:
   # PostgreSQL Database
   postgres:
@@ -10,7 +9,7 @@ services:
       POSTGRES_PASSWORD: root
       POSTGRES_DB: eventicmind_db
     ports:
-      - "5433:5432" 
+      - "5433:5432" # Mapping host port 5433 to container port 5432
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -29,22 +28,26 @@ services:
     container_name: ecommerce-backend
     restart: always
     depends_on:
-      postgres:
+      postgres: # Backend needs the DB to be ready
         condition: service_healthy
     environment:
+      # --- Backend Specific Config ---
       - DATABASE_URL=postgresql://postgres:root@postgres:5432/eventicmind_db
-      - JWT_SECRET_KEY=ePJVSkFfl2lyn7hZtfLSmUbI1Lj4kxqUiwdlUw-UwCM
-      - JWT_ALGORITHM=HS256
-      - ACCESS_TOKEN_EXPIRE_MINUTES=30
-      - ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000,http://localhost:8080
-      - OLLAMA_MODEL=mistral
-      - LOG_LEVEL=INFO
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-fallback_secret_key_for_dev} # Use env var or fallback
+      - JWT_ALGORITHM=${JWT_ALGORITHM:-HS256}
+      - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:3000,http://localhost:8080} # Frontend/KafkaUI origins
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-mistral} # If using Ollama
+      - LOG_LEVEL=${LOG_LEVEL:-INFO} # Central log level control
+
+      # --- Pass Kafka Broker Info (Optional, if backend needs to produce directly) ---
+      # - KAFKA_BROKER=kafka:9092
     ports:
       - "8000:8000"
     networks:
       - app-network
     volumes:
-      - ./backend:/app
+      - ./backend:/app # Mount local code for development hot-reloading
 
   # Frontend Vite/React Service
   frontend:
@@ -54,30 +57,32 @@ services:
     container_name: ecommerce-frontend
     restart: always
     environment:
-      - VITE_API_BASE_URL=http://localhost:8000
+      # Pass the backend URL to the frontend build/runtime
+      - VITE_API_BASE_URL=${VITE_API_BASE_URL:-http://localhost:8000}
     ports:
       - "5173:5173"
     networks:
       - app-network
     volumes:
-      - ./frontend:/app
-      - /app/node_modules
+      - ./frontend:/app       # Mount local code for development
+      - /app/node_modules    # Use node_modules from the image, not the host
     depends_on:
-      - backend
+      - backend # Frontend depends on backend being available
 
- # ZooKeeper - Required for Kafka
+  # ZooKeeper - Required for Kafka
   zookeeper:
     image: confluentinc/cp-zookeeper:latest
     container_name: ecommerce-zookeeper
+    restart: always
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
     ports:
-      - "2181:2181"
+      - "2181:2181" # Expose Zookeeper port if needed externally (usually not)
     networks:
       - app-network
     healthcheck:
-      test: echo srvr | nc zookeeper 2181 || exit 1
+      test: echo srvr | nc localhost 2181 || exit 1 # Use localhost inside container
       interval: 10s
       timeout: 5s
       retries: 3
@@ -86,68 +91,116 @@ services:
   kafka:
     image: confluentinc/cp-kafka:latest
     container_name: ecommerce-kafka
+    restart: always
     depends_on:
-      zookeeper:
+      zookeeper: # Kafka depends on Zookeeper being healthy
         condition: service_healthy
     ports:
-      - "9092:9092"
-      - "29092:29092"
+      - "9092:9092"   # Internal Kafka communication
+      - "29092:29092" # External Kafka access (for local tools/debugging)
     environment:
       KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181 # Connect to Zookeeper service
+      # Advertised listeners: How clients connect. PLAINTEXT for internal, PLAINTEXT_HOST for external.
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT # How brokers talk to each other
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1 # For single-node Kafka setup
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true" # Allows topics to be created automatically (like by Debezium)
     networks:
       - app-network
     healthcheck:
-      test: kafka-topics --bootstrap-server kafka:9092 --list || exit 1
-      interval: 10s
-      timeout: 5s
-      retries: 3
+      # Test if Kafka is responsive by listing topics
+      test: kafka-topics --bootstrap-server localhost:9092 --list > /dev/null || exit 1 # Use localhost inside container
+      interval: 15s # Give Kafka more time to start
+      timeout: 10s
+      retries: 5
 
   # Kafka UI - Web interface for managing Kafka
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: ecommerce-kafka-ui
+    restart: always
     depends_on:
-      - kafka
+      - kafka # Depends on Kafka being available
     ports:
-      - "8080:8080"
+      - "8080:8080" # Access Kafka UI on host port 8080
     environment:
-      - KAFKA_CLUSTERS_0_NAME=local
-      - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:9092
-      - KAFKA_CLUSTERS_0_ZOOKEEPER=zookeeper:2181
+      KAFKA_CLUSTERS_0_NAME: local # Cluster name in UI
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092 # Connect to Kafka service internally
+      # KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181 # Optional, bootstrap is preferred
     networks:
       - app-network
 
-  # Debezium Connect - For Change Data Capture
+  # Debezium Connect - For Change Data Capture (CDC)
   debezium:
-    image: debezium/connect:2.4
+    image: debezium/connect:2.4 # Use a specific version if needed
     container_name: ecommerce-debezium
+    restart: always
     depends_on:
-      kafka:
+      kafka: # Debezium needs Kafka to publish events
+        condition: service_healthy
+      postgres: # Debezium needs the source DB to be available
         condition: service_healthy
     ports:
-      - "8083:8083"
+      - "8083:8083" # Expose Debezium REST API
     environment:
-      GROUP_ID: 1
-      CONFIG_STORAGE_TOPIC: debezium_connect_configs
-      OFFSET_STORAGE_TOPIC: debezium_connect_offsets
-      STATUS_STORAGE_TOPIC: debezium_connect_statuses
-      BOOTSTRAP_SERVERS: kafka:9092
+      # --- Kafka Connect Worker Config ---
+      GROUP_ID: debezium_connect_group # Kafka consumer group for the Connect worker itself
+      CONFIG_STORAGE_TOPIC: debezium_connect_configs # Topic to store connector configs
+      OFFSET_STORAGE_TOPIC: debezium_connect_offsets # Topic to store connector offsets
+      STATUS_STORAGE_TOPIC: debezium_connect_statuses # Topic to store connector statuses
+      BOOTSTRAP_SERVERS: kafka:9092 # Connect to Kafka service internally
+      # --- Default Converters (JSON without Schema) ---
       KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
       VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
       KEY_CONVERTER_SCHEMAS_ENABLE: "false"
       VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
+      # --- Ensure topics are created if they don't exist ---
+      CONFIG_STORAGE_REPLICATION_FACTOR: 1 # For single-node Kafka
+      OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      STATUS_STORAGE_REPLICATION_FACTOR: 1
     networks:
       - app-network
 
+  # Kafka Consumer Service for Orders (Runs Python script)
+  order-consumer:
+    build:
+      context: ./backend # Uses the same Docker image as the main backend
+      dockerfile: Dockerfile
+    container_name: ecommerce-order-consumer
+    restart: always # Restart automatically if it crashes
+    depends_on:
+      kafka: # MUST wait for Kafka to be healthy
+        condition: service_healthy
+      # Removed postgres dependency: Consumer doesn't directly access DB in current logic
+      # backend: # Depends on backend only if using shared code/modules that require it to be running
+      #   condition: service_started
+    environment:
+      # --- Consumer Specific Environment Variables ---
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}              # Inherit log level from global env or default to INFO
+      - KAFKA_BROKER=kafka:9092                  # Internal address of Kafka broker service
+      - KAFKA_ORDER_TOPIC=eventicmind.public.orders # Topic name configured in Debezium connector
+      - KAFKA_GROUP_ID=order-notifications-group   # Unique consumer group for this service
+      # - DATABASE_URL=... # Add back only if the consumer script needs DB access
+
+    # --- Correct Command to run the Python script ---
+    # Assumes 'run_consumer.py' is in the root of the '/app' directory (mounted from './backend')
+    command: ["python", "run_consumer.py"]
+
+    networks:
+      - app-network # Needs to be on the same network as Kafka
+
+    volumes:
+      # Mount the backend code so the consumer can access run_consumer.py
+      # and any shared modules like websocket_manager.py
+      - ./backend:/app
+
+# Define the network used by all services
 networks:
   app-network:
-    driver: bridge
+    driver: bridge # Default Docker network driver
 
+# Define named volumes for persistent data
 volumes:
-  postgres_data:
+  postgres_data: # Persists PostgreSQL data across container restarts
